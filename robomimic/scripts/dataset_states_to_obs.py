@@ -17,6 +17,8 @@ Args:
 
     camera_width (int): width of image observation
 
+    depth (bool): if set, also extract aligned depth-buffer observations for each camera.
+
     done_mode (int): how to write done signal. If 0, done is 1 whenever s' is a success state.
         If 1, done is 1 at the end of each trajectory. If 2, both.
 
@@ -33,6 +35,10 @@ Example usage:
     python dataset_states_to_obs.py --dataset /path/to/demo.hdf5 --output_name image.hdf5 \
         --done_mode 2 --camera_names agentview robot0_eye_in_hand --camera_height 84 --camera_width 84
 
+    # extract aligned 128x128 RGB-D observations from one trajectory
+    python robomimic/scripts/dataset_states_to_obs.py --dataset /path/to/demo.hdf5 --output_name demo_rgbd.hdf5 \
+        --camera_names robot0_head_camera robot0_left_eye_in_hand --camera_height 128 --camera_width 128 --depth --n 1
+
     # use dense rewards, and only annotate the end of trajectories with done signal
     python dataset_states_to_obs.py --dataset /path/to/demo.hdf5 --output_name image_dense_done_1.hdf5 \
         --done_mode 1 --dense --camera_names agentview robot0_eye_in_hand --camera_height 84 --camera_width 84
@@ -42,6 +48,7 @@ import json
 import h5py
 import argparse
 import numpy as np
+import torch
 from copy import deepcopy
 import multiprocessing
 import queue
@@ -53,7 +60,7 @@ import robomimic.utils.file_utils as FileUtils
 import robomimic.utils.env_utils as EnvUtils
 from robomimic.envs.env_base import EnvBase
 
-from robomimic.scripts.conversion.extract_action_dict import extract_action_dict
+import robomimic.utils.torch_utils as TorchUtils
 from robomimic.scripts.filter_dataset_size import filter_dataset_size
 
 """ End of dataset_states_to_args copy over """
@@ -65,6 +72,7 @@ def extract_trajectory(
     actions,
     done_mode,
     add_datagen_info=False,
+    actions_abs=None,
 ):
     """
     Helper function to extract observations, rewards, and dones along a trajectory using
@@ -75,12 +83,15 @@ def extract_trajectory(
         initial_state (dict): initial simulation state to load
         states (np.array): array of simulation states to load to extract information
         actions (np.array): array of actions
+        actions_abs (np.array or None): saved absolute actions to preserve, if available
         done_mode (int): how to write done signal. If 0, done is 1 whenever s' is a 
             success state. If 1, done is 1 at the end of each trajectory. 
             If 2, do both.
     """
     assert isinstance(env, EnvBase)
     assert states.shape[0] == actions.shape[0]
+    if actions_abs is not None:
+        assert actions_abs.shape[0] == actions.shape[0]
 
     # load the initial state
     env.reset()
@@ -129,7 +140,8 @@ def extract_trajectory(
         done = int(done)
 
         # get the absolute action
-        action_abs = env.base_env.convert_rel_to_abs_action(actions[t])
+        action_abs = (actions_abs[t] if actions_abs is not None
+                      else env.base_env.convert_rel_to_abs_action(actions[t]))
 
         # collect transition
         traj["obs"].append(obs)
@@ -153,6 +165,43 @@ def extract_trajectory(
             traj[k] = np.array(traj[k])
 
     return traj
+
+
+def extract_missing_action_dict(dataset):
+    """Generate legacy action dictionaries only for episodes without a saved dictionary."""
+    with h5py.File(dataset, "r+") as f:
+        for demo in f["data"].values():
+            if "action_dict" in demo:
+                continue
+            # Legacy Cartesian layout: position (3), axis-angle (3), gripper (1),
+            # optionally followed by mobile base mode (1). Check all inputs first.
+            unsupported = [(key, demo[key].shape) for key in ("actions", "actions_abs")
+                           if key in demo and (demo[key].ndim != 2 or demo[key].shape[1] not in (7, 8))]
+            if unsupported:
+                print("WARNING: leaving action_dict absent for {}: unsupported action shapes {}; "
+                      "legacy Cartesian reconstruction only supports 7-D or 8-D actions.".format(
+                          demo.name, unsupported))
+                continue
+            for action_key, prefix in (("actions", "rel_"), ("actions_abs", "abs_")):
+                if action_key not in demo:
+                    continue
+                actions = demo[action_key][:]
+                rotation = actions[:, 3:6].astype(np.float32)
+                action_dict = {
+                    prefix + "pos": actions[:, :3].astype(np.float32),
+                    prefix + "rot_axis_angle": rotation,
+                    prefix + "rot_6d": TorchUtils.axis_angle_to_rot_6d(
+                        axis_angle=torch.from_numpy(rotation)
+                    ).numpy().astype(np.float32),
+                    "gripper": actions[:, 6:7].astype(np.float32),
+                }
+                if actions.shape[1] == 8:
+                    action_dict["base_mode"] = actions[:, 7:8].astype(np.float32)
+                group = demo.require_group("action_dict")
+                for key, value in action_dict.items():
+                    if key in group:
+                        del group[key]
+                    group.create_dataset(key, data=value)
 
 
 """ The process that writes over the generated files to memory """
@@ -195,9 +244,7 @@ def write_traj_to_file(args, output_path, total_samples, total_run, processes, i
                     
                     # copy action dict (if applicable)
                     if "data/{}/action_dict".format(ep) in f:
-                        action_dict = f["data/{}/action_dict".format(ep)]
-                        for k in action_dict:
-                            ep_data_grp.create_dataset("action_dict/{}".format(k), data=np.array(action_dict[k][()]))
+                        f.copy("data/{}/action_dict".format(ep), ep_data_grp, name="action_dict")
 
                     # episode metadata
                     if is_robosuite_env:
@@ -236,6 +283,7 @@ def write_traj_to_file(args, output_path, total_samples, total_run, processes, i
         camera_height=args.camera_height, 
         camera_width=args.camera_width, 
         reward_shaping=args.shaped,
+        use_depth_obs=args.depth,
     )
     print("total processes end {}".format(total_run.value))
     data_grp.attrs["env_args"] = json.dumps(env.serialize(), indent=4) # environment info
@@ -244,7 +292,7 @@ def write_traj_to_file(args, output_path, total_samples, total_run, processes, i
     f_out.close()
     f.close()
 
-    extract_action_dict(dataset=output_path)
+    extract_missing_action_dict(dataset=output_path)
     for num_demos in [10, 20, 30, 40, 50, 60, 70, 75, 80, 90, 100, 125, 150, 200, 250, 300, 400, 500, 600, 700, 800, 900, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 10000]:
         filter_dataset_size(
             output_path,
@@ -261,12 +309,11 @@ def write_traj_to_file(args, output_path, total_samples, total_run, processes, i
     print(f"Time elapsed: {elapsed_time:.2f} seconds")
     return
 
-# runs multiple trajectory. If there has been an unrecoverable error, the system puts the current work back into the queue and exits
+# Run multiple trajectories; report unrecoverable worker errors and exit without requeueing.
 def extract_multiple_trajectories(process_num, current_work_array, work_queue, lock, args2, num_finished, mul_queue):
     try:
         extract_multiple_trajectories_with_error(process_num, current_work_array, work_queue, lock, args2, mul_queue)
     except Exception as e:
-        work_queue.put(current_work_array[process_num])
         print("*>*"*50)
         print("Error process num {}:".format(process_num))
         print(e)
@@ -305,6 +352,7 @@ def extract_multiple_trajectories_with_error(process_num, current_work_array, wo
         camera_height=args.camera_height, 
         camera_width=args.camera_width, 
         reward_shaping=args.shaped,
+        use_depth_obs=args.depth,
     )
 
     start_time = time.time()
@@ -335,7 +383,7 @@ def extract_multiple_trajectories_with_error(process_num, current_work_array, wo
         demos = demos[:args.n]
 
     ind = retrieve_new_index(process_num, current_work_array, work_queue, lock)
-    while (not work_queue.empty()) and (ind != -1):
+    while ind != -1:
         try:
             # print("Running {} index".format(ind))
             ep = demos[ind]
@@ -349,6 +397,8 @@ def extract_multiple_trajectories_with_error(process_num, current_work_array, wo
 
             # extract obs, rewards, dones
             actions = f["data/{}/actions".format(ep)][()]
+            actions_abs = (f["data/{}/actions_abs".format(ep)][()]
+                           if "data/{}/actions_abs".format(ep) in f else None)
                 
             traj = extract_trajectory(
                 env=env, 
@@ -357,6 +407,7 @@ def extract_multiple_trajectories_with_error(process_num, current_work_array, wo
                 actions=actions,
                 done_mode=args.done_mode,
                 add_datagen_info=args.add_datagen_info,
+                actions_abs=actions_abs,
             )
 
             # maybe copy reward or done signal from source file
@@ -388,6 +439,10 @@ def extract_multiple_trajectories_with_error(process_num, current_work_array, wo
             print("Error processing demo index {}: {}".format(ind, e))
             print(traceback.format_exc())
             print("_"*50)
+            print("Skipping failed demo index {}".format(ind))
+            ind = retrieve_new_index(process_num, current_work_array, work_queue, lock)
+            if ind == -1:
+                break
             del env
             env = EnvUtils.create_env_for_data_processing( #when it errors, it like blows up the environment for some reason
                 env_meta=env_meta,
@@ -395,6 +450,7 @@ def extract_multiple_trajectories_with_error(process_num, current_work_array, wo
                 camera_height=args.camera_height, 
                 camera_width=args.camera_width, 
                 reward_shaping=args.shaped,
+                use_depth_obs=args.depth,
             )
 
     f.close()
@@ -402,6 +458,9 @@ def extract_multiple_trajectories_with_error(process_num, current_work_array, wo
 
 
 def dataset_states_to_obs_multiprocessing(args):
+    if args.depth and not args.camera_names:
+        raise ValueError("--depth requires at least one camera in --camera_names")
+
     # create environment to use for data processing
 
     # output file in same directory as input file
@@ -528,6 +587,12 @@ if __name__ == "__main__":
         type=int,
         default=128,
         help="(optional) width of image observations",
+    )
+
+    parser.add_argument(
+        "--depth",
+        action="store_true",
+        help="(optional) also extract aligned depth-buffer observations from the requested cameras",
     )
 
     # specifies how the "done" signal is written. If "0", then the "done" signal is 1 wherever 

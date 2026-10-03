@@ -244,6 +244,7 @@ def create_env_for_data_processing(
     camera_width, 
     reward_shaping,
     seed=None,
+    use_depth_obs=False,
 ):
     """
     Creates environment for processing dataset observations and rewards.
@@ -264,6 +265,8 @@ def create_env_for_data_processing(
         camera_width (int): camera width for all cameras
 
         reward_shaping (bool): if True, use shaped environment rewards, else use sparse task completion rewards
+
+        use_depth_obs (bool): if True, also extract depth observations from the requested cameras
     """
     env_name = env_meta["env_name"]
     env_type = get_env_type(env_meta=env_meta)
@@ -280,6 +283,11 @@ def create_env_for_data_processing(
 
     if seed is not None:
         env_kwargs["seed"] = seed
+
+    if use_depth_obs:
+        if not camera_names:
+            raise ValueError("Depth observations require at least one camera")
+        env_kwargs["use_depth_obs"] = True
 
     env = env_class.create_for_data_processing(
         env_name=env_name, 
