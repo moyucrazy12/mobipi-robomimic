@@ -29,6 +29,7 @@ class EnvRobosuite(EB.EnvBase):
         use_image_obs=False, 
         postprocess_visual_obs=True,
         env_lang=None, 
+        use_depth_obs=False,
         **kwargs,
     ):
         """
@@ -50,6 +51,8 @@ class EnvRobosuite(EB.EnvBase):
                 for saving to a dataset (to save space on RGB images for example).
 
             lang: TODO add documentation
+
+            use_depth_obs (bool): if True, render depth-buffer observations alongside RGB.
         """
         self.postprocess_visual_obs = postprocess_visual_obs
 
@@ -67,7 +70,7 @@ class EnvRobosuite(EB.EnvBase):
             ignore_done=True,
             use_object_obs=True,
             use_camera_obs=use_image_obs,
-            camera_depths=False,
+            camera_depths=use_depth_obs,
         )
         kwargs.update(update_kwargs)
 
@@ -87,7 +90,7 @@ class EnvRobosuite(EB.EnvBase):
             # make sure gripper visualization is turned off (we almost always want this for learning)
             kwargs["gripper_visualization"] = False
             del kwargs["camera_depths"]
-            kwargs["camera_depth"] = False # rename kwarg
+            kwargs["camera_depth"] = use_depth_obs # rename kwarg
 
         self._env_name = env_name
         self._init_kwargs = deepcopy(kwargs)
@@ -256,6 +259,12 @@ class EnvRobosuite(EB.EnvBase):
                 if self.postprocess_visual_obs:
                     ret[k] = ObsUtils.process_obs(obs=ret[k], obs_key=k)
 
+            elif (k in ObsUtils.OBS_KEYS_TO_MODALITIES) and ObsUtils.key_is_obs_modality(key=k, obs_modality="depth"):
+                # Match the RGB orientation, preserving the raw MuJoCo depth buffer.
+                ret[k] = di[k][::-1]
+                if self.postprocess_visual_obs:
+                    ret[k] = ObsUtils.process_obs(obs=ret[k], obs_key=k)
+
         # "object" key contains object information
         if "object-state" in di:
             ret["object"] = np.array(di["object-state"])
@@ -379,6 +388,7 @@ class EnvRobosuite(EB.EnvBase):
         camera_height, 
         camera_width, 
         reward_shaping, 
+        use_depth_obs=False,
         **kwargs,
     ):
         """
@@ -392,9 +402,12 @@ class EnvRobosuite(EB.EnvBase):
             camera_height (int): camera height for all cameras
             camera_width (int): camera width for all cameras
             reward_shaping (bool): if True, use shaped environment rewards, else use sparse task completion rewards
+            use_depth_obs (bool): if True, also extract depth-buffer observations for each camera
         """
         is_v1 = (robosuite.__version__.split(".")[0] == "1")
         has_camera = (len(camera_names) > 0)
+        if use_depth_obs and not has_camera:
+            raise ValueError("Depth observations require at least one camera")
 
         new_kwargs = {
             "reward_shaping": reward_shaping,
@@ -428,6 +441,10 @@ class EnvRobosuite(EB.EnvBase):
                 "rgb": image_modalities,
             }
         }
+        if use_depth_obs:
+            obs_modality_specs["obs"]["depth"] = (
+                ["{}_depth".format(cn) for cn in camera_names] if is_v1 else ["depth"]
+            )
         ObsUtils.initialize_obs_utils_with_obs_specs(obs_modality_specs)
 
         # note that @postprocess_visual_obs is False since this env's images will be written to a dataset
@@ -436,6 +453,7 @@ class EnvRobosuite(EB.EnvBase):
             render=False, 
             render_offscreen=has_camera, 
             use_image_obs=has_camera, 
+            use_depth_obs=use_depth_obs,
             postprocess_visual_obs=False,
             **kwargs,
         )
