@@ -113,16 +113,18 @@ def load_data_for_training(config, obs_keys, lang_encoder=None):
         assert (train_filter_by_attribute is not None) and (valid_filter_by_attribute is not None), \
             "did not specify filter keys corresponding to train and valid split in dataset" \
             " - please fill config.train.hdf5_filter_key and config.train.hdf5_validation_filter_key"
-        train_demo_keys = FileUtils.get_demos_for_filter_key(
-            hdf5_path=os.path.expanduser(config.train.data),
-            filter_key=train_filter_by_attribute,
-        )
-        valid_demo_keys = FileUtils.get_demos_for_filter_key(
-            hdf5_path=os.path.expanduser(config.train.data),
-            filter_key=valid_filter_by_attribute,
-        )
-        assert set(train_demo_keys).isdisjoint(set(valid_demo_keys)), "training demonstrations overlap with " \
-            "validation demonstrations!"
+        for dataset_cfg in config.train.data:
+            dataset_path = os.path.expanduser(dataset_cfg["path"])
+            train_demo_keys = FileUtils.get_demos_for_filter_key(
+                hdf5_path=dataset_path,
+                filter_key=dataset_cfg.get("filter_key", train_filter_by_attribute),
+            )
+            valid_demo_keys = FileUtils.get_demos_for_filter_key(
+                hdf5_path=dataset_path,
+                filter_key=dataset_cfg.get("filter_key", valid_filter_by_attribute),
+            )
+            assert set(train_demo_keys).isdisjoint(set(valid_demo_keys)), \
+                "training demonstrations overlap with validation demonstrations in {}!".format(dataset_path)
         train_dataset = dataset_factory(
             config, obs_keys,
             filter_by_attribute=train_filter_by_attribute,
@@ -185,6 +187,7 @@ def dataset_factory(config, obs_keys, filter_by_attribute=None, dataset_path=Non
         filter_by_attribute=filter_by_attribute,
         shuffled_obs_key_groups=config.train.shuffled_obs_key_groups,
         lang_encoder=lang_encoder,
+        load_language=config.algo.get("language_conditioned", False),
     )
 
     ds_kwargs["hdf5_path"] = [ds_cfg["path"] for ds_cfg in config.train.data]

@@ -46,6 +46,7 @@ class SequenceDataset(torch.utils.data.Dataset):
         shuffled_obs_key_groups=None,
         lang_encoder=None,
         dataset_lang=None,
+        load_language=True,
     ):
         """
         Dataset class for fetching sequences of experience.
@@ -98,7 +99,7 @@ class SequenceDataset(torch.utils.data.Dataset):
 
             shuffled_obs_key_groups (list): TODO
 
-            lang: TODO documentation
+            load_language (bool): whether to compute and include language embeddings.
         """
         super(SequenceDataset, self).__init__()
 
@@ -125,6 +126,7 @@ class SequenceDataset(torch.utils.data.Dataset):
 
         # set up lang and language embedding
         self.dataset_lang = dataset_lang # language for entire dataset
+        self.load_language = load_language
 
         self.n_frame_stack = frame_stack
         assert self.n_frame_stack >= 1
@@ -257,6 +259,9 @@ class SequenceDataset(torch.utils.data.Dataset):
             for _ in range(num_sequences):
                 self._index_to_demo_id[self.total_num_sequences] = ep
                 self.total_num_sequences += 1
+
+        if not self.load_language:
+            return
 
         device = TorchUtils.get_torch_device(try_to_use_cuda=True)
         lang_encoder = LangUtils.LangEncoder(
@@ -813,6 +818,9 @@ class R2D2Dataset(SequenceDataset):
         for _ in range(num_sequences):
             self._index_to_demo_id[self.total_num_sequences] = ep
             self.total_num_sequences += 1
+
+        if not self.load_language:
+            return
 
         device = TorchUtils.get_torch_device(try_to_use_cuda=True)
         lang_encoder = LangUtils.LangEncoder(
