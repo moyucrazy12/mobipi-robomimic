@@ -45,6 +45,27 @@ def make_transform(position, rotation):
     return transform
 
 
+def source_command_as_cartesian(adapter, source_action):
+    """Encode the same-timestep recorded world IK command as a base TCP pose.
+
+    T_base_tcp_cmd = inv(T_world_base) @ T_world_ref_cmd @ inv(T_tcp_ref).
+    Resolve the left slot from the instantiated original controller, including
+    its otherwise unused reference slots. No achieved TCP target is used.
+    """
+    source_action = np.asarray(source_action, dtype=np.float64)
+    if source_action.shape != (adapter.env.action_dim,) or not np.isfinite(source_action).all():
+        raise ValueError("Expected one finite original environment action")
+    start, end = adapter.controller.joint_action_policy.action_split_indexes()["left"]
+    if (start, end) != tuple(adapter.controller._whole_body_controller_action_split_indexes["left"]):
+        raise ValueError("IK and packed left-action slices disagree")
+    reference = source_action[start:end]
+    world_reference = make_transform(reference[:3], Rotation.from_rotvec(reference[3:]).as_matrix())
+    world_tcp = world_reference @ np.linalg.inv(adapter.tcp_to_reference)
+    base_tcp = np.linalg.inv(adapter.site_transform(adapter.base_site)) @ world_tcp
+    return np.concatenate((base_tcp[:3, 3], quaternion_to_rotation6d(
+        Rotation.from_matrix(base_tcp[:3, :3]).as_quat())))
+
+
 class RBY1CartesianAdapter:
     """Convert one left TCP target into the existing WholeBody action interface.
 
