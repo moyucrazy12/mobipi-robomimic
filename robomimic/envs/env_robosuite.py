@@ -12,6 +12,10 @@ try:
     import robocasa
 except ImportError:
     pass
+try:
+    import mobipi.envs  # noqa: F401  registers Mobi-pi task variants such as CloseDrawerLeft
+except ImportError:
+    pass
 
 import robomimic.utils.obs_utils as ObsUtils
 import robomimic.utils.lang_utils as LangUtils

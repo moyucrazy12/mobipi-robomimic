@@ -40,7 +40,9 @@ def controller_snapshot(env):
 def diagnostic_env(metadata, controller_config, xml, episode_metadata):
     import robosuite
 
-    kwargs = copy.deepcopy(metadata["env_kwargs"])
+    from robomimic.utils.rby1_saved_model import with_saved_base
+
+    kwargs = with_saved_base(copy.deepcopy(metadata["env_kwargs"]), xml)
     kwargs.update(controller_configs=copy.deepcopy(controller_config), has_renderer=False,
                   has_offscreen_renderer=False, use_camera_obs=False, ignore_done=True)
     env = robosuite.make(metadata["env_name"], **kwargs)
