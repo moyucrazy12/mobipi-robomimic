@@ -1,0 +1,99 @@
+RB-Y1 115-demo Cartesian-command pipeline
+========================================
+
+This pipeline prepares 115 successful CloseSingleDoor demonstrations for the
+validated 9D Diffusion Policy. Run commands from the robomimic repository root
+with the Mobi-pi Conda environment. Original HDF5 files are read-only; derivative
+paths must be new. Failed demonstrations are never included.
+
+Saved model requirement
+----------------------
+
+Each episode uses its own ``model_file``, ``ep_meta`` and saved states. Only
+mesh/texture asset paths are relocated to the installed packages. Physics is
+compiled from saved XML from the first simulator construction; a fresh robot
+model with ``robot0_world_j`` is rejected. Joint IDs must match their qpos/dof
+addresses for the original controller. No controller or IK implementation is
+changed. The initialization helper uses temporary class patches, so run it in a
+single thread or separate processes rather than concurrent threads.
+
+Commands
+--------
+
+Set local paths; neither these datasets nor the work directory belongs in Git::
+
+    DATA=~/KTH_Univ/DD2414_Engineerins/new_115_demos/new_115_demos
+    WORK=experiment_results/rby1_115d_preparation_new
+    PYTHON=/home/david-isfc/miniconda3/envs/mobipi/bin/python
+    export PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+
+Run a one-demo smoke test, then render all saved states, then finalize commands
+and masks. Each phase refuses to overwrite its output::
+
+    for PHASE in smoke render finalize; do
+      "$PYTHON" robomimic/scripts/prepare_rby1_115d_dataset.py \
+        --phase "$PHASE" --source "$DATA/demo.hdf5" \
+        --rendered "$DATA/demo_im128_head_wrist.hdf5" \
+        --output "$DATA/demo_im128_head_wrist_cartesian_cmd.hdf5" \
+        --work-dir "$WORK" || break
+    done
+
+These commands are for reproducing preparation with new output paths. The
+existing validated derivatives should not be overwritten or rendered again.
+
+RGB observations are uint8 ``(T,128,128,3)`` for ``robot0_head_camera_image`` and
+``robot0_left_eye_in_hand_image``. Rendering reproduces the RoboSuite camera
+convention plus Robomimic vertical flip; the native camera sensor is checked at
+the first state of every episode. Original datasets and attributes are compared
+against the copy. Only derivative camera-related ``env_args`` fields change;
+original metadata is retained as ``source_env_args``.
+
+``actions_eef_cmd[t]`` encodes the original same-timestep command using the shared
+``source_command_as_cartesian`` utility::
+
+    T_base_tcp_cmd = inv(T_world_base[t]) @ T_world_ref_command[t] @ inv(T_tcp_ref)
+    action9 = concatenate(xyz, R[:,0], R[:,1])
+
+The TCP is ``gripper0_left_grip_site`` and the IK reference is
+``gripper0_left_ft_frame``. No achieved next-state pose is used. All commands are
+round-tripped through the existing Cartesian adapter. Masks use seed 2026 and
+``default_rng(seed).permutation`` of numerically sorted demo names: first 15
+validation, remaining 100 training.
+
+Replay three spread-out demos from each split before creating a new config::
+
+    "$PYTHON" robomimic/scripts/validate_rby1_115d_replay.py --work-dir "$WORK"
+    "$PYTHON" robomimic/scripts/create_rby1_115d_config.py \
+      --work-dir "$WORK" --output /tmp/rby1_115d_reproduced_config.json
+
+Failed replay prevents creation of the success gate. Config creation requires
+the matching dataset/source gate and counts actual SequenceDataset samples and
+batch-16 DataLoaders with ``drop_last=True``. Existing configs are not overwritten.
+The config builder preserves all model/observation settings from the working
+command-target full-pass config.
+
+Validation checkpoint
+---------------------
+
+The prepared dataset contains 171258 states: 145925 training sequences and
+25333 validation sequences. With both padding options enabled, frame stack 2
+and sequence length 15, full passes are 9120 training batches and 1583 validation
+batches; each loader drops five sequences. Six full saved-model command replays
+closed the microwave: train demo_0/demo_58/demo_114 and validation
+demo_10/demo_47/demo_111. Maximum packed-left round-trip error was 1.55e-15.
+Replay paths are not identical: demo_10 reached 32.5 mm maximum TCP deviation
+and 1.60 mm mean deviation from the recorded next achieved TCP.
+
+The checked-in 115-demo config keeps batch 16, workers 4, horizons 2/8/16,
+min-max action normalization, EMA, DDIM 10 inference steps, and only the two RGB
+plus TCP position/grip-site quaternion observations. Joint observations remain
+in the dataset but are not policy inputs. The standard short debug passed
+training, validation, checkpoint save/reload and finite EMA inference::
+
+    "$PYTHON" robomimic/scripts/train.py \
+      --config robomimic/exps/rby1_close_single_door_cartesian_cmd_115d_15pass.json \
+      --debug
+
+When ready, remove ``--debug`` to start the 15-pass run. This checkpoint does not
+launch that run. Historical local throughput suggests about 48.6 minutes per
+train-plus-validation pass, or 12.1 hours total; new dataset I/O may differ.
