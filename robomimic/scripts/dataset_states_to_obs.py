@@ -114,6 +114,10 @@ def extract_trajectory(
         datagen_info=[],
     )    
     traj_len = states.shape[0]
+    # WholeBody IK actions (RB-Y1) are absolute targets already; RoboCasa's
+    # convert_rel_to_abs_action only handles a right-arm OSC controller
+    ik = getattr(env.base_env.robots[0].composite_controller, "joint_action_policy", None)
+    actions_are_absolute = getattr(ik, "input_action_repr", None) == "absolute"
     # iteration variable @t is over "next obs" indices
     for t in range(traj_len):
         obs = deepcopy(env.reset_to({"states" : states[t]}))
@@ -140,8 +144,12 @@ def extract_trajectory(
         done = int(done)
 
         # get the absolute action
-        action_abs = (actions_abs[t] if actions_abs is not None
-                      else env.base_env.convert_rel_to_abs_action(actions[t]))
+        if actions_abs is not None:
+            action_abs = actions_abs[t]
+        elif actions_are_absolute:
+            action_abs = actions[t]
+        else:
+            action_abs = env.base_env.convert_rel_to_abs_action(actions[t])
 
         # collect transition
         traj["obs"].append(obs)
@@ -213,10 +221,18 @@ def write_traj_to_file(args, output_path, total_samples, total_run, processes, i
     num_processed = 0
     
     try:
-        while((total_run.value < (processes)) or not mul_queue.empty()):
-            if not mul_queue.empty():
+        # Each worker puts None after its last trajectory. Items from one worker
+        # arrive in order, so reading until every worker's None has arrived
+        # cannot drop a trajectory that is still in flight (large trajectories
+        # are sent by a background thread after put() returns, so checking
+        # total_run / mul_queue.empty() could stop before they arrive).
+        finished_workers = 0
+        while finished_workers < processes:
+            item = mul_queue.get()
+            if item is None:
+                finished_workers += 1
+            else:
                 num_processed = num_processed + 1
-                item = mul_queue.get()
                 ep = item[0]
                 traj = item[1]
                 process_num = item[2]
@@ -322,6 +338,7 @@ def extract_multiple_trajectories(process_num, current_work_array, work_queue, l
         print()
 
     num_finished.value = num_finished.value + 1
+    mul_queue.put(None)  # end marker for write_traj_to_file
 
     
 def retrieve_new_index(process_num, current_work_array, work_queue, lock):

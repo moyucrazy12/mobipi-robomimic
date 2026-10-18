@@ -573,6 +573,7 @@ class SequenceDataset(torch.utils.data.Dataset):
         # normalize actions
         action_normalization_stats = self.get_action_normalization_stats()
         ac_dict = ObsUtils.normalize_dict(ac_dict, normalization_stats=action_normalization_stats)
+        ac_dict = clip_min_max_actions(ac_dict, self.action_config)
 
         # concatenate all action components
         meta["actions"] = AcUtils.action_dict_to_vector(ac_dict)
@@ -1029,6 +1030,7 @@ class R2D2Dataset(SequenceDataset):
         # normalize actions
         action_normalization_stats = self.get_action_normalization_stats()
         ac_dict = ObsUtils.normalize_dict(ac_dict, normalization_stats=action_normalization_stats)
+        ac_dict = clip_min_max_actions(ac_dict, self.action_config)
 
         # concatenate all action components
         meta["actions"] = AcUtils.action_dict_to_vector(ac_dict)
@@ -1196,6 +1198,21 @@ def _aggregate_traj_stats(traj_stats_a, traj_stats_b):
         max_ = np.maximum(max_a, max_b)
         merged_stats[k] = dict(n=n, mean=mean, sqdiff=M2, min=min_, max=max_)
     return merged_stats
+
+def clip_min_max_actions(ac_dict, action_config):
+    """
+    Clip min_max normalized actions to [-1, 1].
+
+    min_max maps the training min / max to +-0.999999, but normalizing the
+    float32 cached actions can land ~1e-5 past +-1 on dimensions with a small
+    range around a large value (e.g. RB-Y1 rotation6d components near +-1),
+    which Diffusion Policy rejects.
+    """
+    for k in ac_dict:
+        if action_config[k].get("normalization", None) == "min_max":
+            ac_dict[k] = np.clip(ac_dict[k], -1.0, 1.0)
+    return ac_dict
+
 
 def action_stats_to_normalization_stats(action_stats, action_config):
     action_normalization_stats = OrderedDict()
