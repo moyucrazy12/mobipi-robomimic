@@ -180,9 +180,9 @@ def train(config, device, eval_only=False):
     print("")
 
     # load training data
-    lang_encoder = LangUtils.LangEncoder(
-        device=device,
-    )
+    lang_encoder = None
+    if config.algo.get("language_conditioned", False):
+        lang_encoder = LangUtils.LangEncoder(device=device)
     trainset, validset = TrainUtils.load_data_for_training(
         config, obs_keys=shape_meta["all_obs_keys"], lang_encoder=lang_encoder)
     train_sampler = trainset.get_dataset_sampler()
@@ -201,6 +201,8 @@ def train(config, device, eval_only=False):
 
     # maybe retreve statistics for normalizing actions
     action_normalization_stats = trainset.get_action_normalization_stats()
+    if validset is not None:
+        validset.set_action_normalization_stats(action_normalization_stats)
 
     # initialize data loaders
     train_loader = DataLoader(

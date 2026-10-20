@@ -121,6 +121,13 @@ venv.bak/
 *.mp4
 *.pth
 
+# Local RB-Y1 datasets and preparation caches (source/config files stay visible).
+*.hdf5
+*.zip
+*.npz
+*.npy
+/new_115_demos/
+
 # default experiment folder
 expdata
 
