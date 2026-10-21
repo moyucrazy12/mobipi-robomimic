@@ -59,6 +59,8 @@ def run_episode(env, policy, args, video_writer=None):
     base_env = env.env.env  # FrameStackWrapper -> EnvRobosuite -> robosuite env
     adapter = RBY1CartesianAdapter(base_env)
     meta = base_env.get_ep_meta()
+    drawer = getattr(base_env, "drawer", None)
+    initial_open = float(max(drawer.get_door_state(env=base_env).values())) if drawer is not None else None
     success, steps = False, 0
     for steps in range(1, args.horizon + 1):
         command = policy(ob=obs)
@@ -69,10 +71,10 @@ def run_episode(env, policy, args, video_writer=None):
         if env.is_success()["task"]:
             success = True
             break
-    drawer = getattr(base_env, "drawer", None)
     result = dict(success=success, steps=steps, layout=meta.get("layout_id"), style=meta.get("style_id"),
                   fixture=getattr(drawer, "name", None))
     if drawer is not None:
+        result["initial_open"] = initial_open
         # fraction of fully open (RoboCasa's success threshold for closing is 0.05)
         result["final_open"] = float(max(drawer.get_door_state(env=base_env).values()))
     return result
