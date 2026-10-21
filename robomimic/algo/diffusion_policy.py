@@ -116,6 +116,9 @@ class DiffusionPolicyUNet(PolicyAlgo):
         self.action_check_done = False
         self.obs_queue = None
         self.action_queue = None
+        # Optional persistent generator for initial inference noise. Keeping it
+        # on CPU lets callers share the same sample stream across CPU and CUDA.
+        self.inference_noise_generator = None
     
     def process_batch_for_training(self, batch):
         """
@@ -345,8 +348,10 @@ class DiffusionPolicyUNet(PolicyAlgo):
         obs_cond = obs_features.flatten(start_dim=1)
 
         # initialize action from Guassian noise
+        generator = self.inference_noise_generator
+        noise_device = self.device if generator is None else generator.device
         noisy_action = torch.randn(
-            (B, Tp, action_dim), device=self.device)
+            (B, Tp, action_dim), device=noise_device, generator=generator).to(self.device)
         naction = noisy_action
         
         # init scheduler
