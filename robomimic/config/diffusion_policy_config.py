@@ -39,6 +39,10 @@ class DiffusionPolicyConfig(BaseConfig):
         self.algo.ema.power = 0.75
 
         self.algo.language_conditioned = False
+
+        # Opt-in representation; absolute models retain their original behavior.
+        self.algo.relative_actions.enabled = False
+        self.algo.relative_actions.arm = "left"
         
         # Noise Scheduler
         ## DDPM

@@ -197,8 +197,16 @@ def dataset_factory(config, obs_keys, filter_by_attribute=None, dataset_path=Non
 
     meta_ds_kwargs = dict()
 
+    ds_class = R2D2Dataset if config.train.data_format == "r2d2" else SequenceDataset
+    if config.algo.get("relative_actions", {}).get("enabled", False):
+        if config.train.data_format != "robomimic":
+            raise ValueError("Relative Cartesian baseline requires robomimic datasets")
+        from robomimic.utils.rby1_relative_dataset import RelativeCartesianSequenceDataset
+        ds_class = RelativeCartesianSequenceDataset
+        ds_kwargs["relative_arm"] = config.algo.relative_actions.arm
+
     dataset = get_dataset(
-        ds_class=R2D2Dataset if config.train.data_format == "r2d2" else SequenceDataset,
+        ds_class=ds_class,
         ds_kwargs=ds_kwargs,
         ds_weights=ds_weights,
         ds_langs=ds_langs,
