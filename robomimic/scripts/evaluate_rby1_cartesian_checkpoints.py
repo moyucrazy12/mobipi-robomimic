@@ -118,22 +118,31 @@ def observation_reader(env, adapter):
     return read
 
 
-def execute_loop(policy, env, adapter, read_observation, hinge_address, max_steps, writer=None, video_camera="freeview", observer=None):
-    """Normal native queued inference; diagnostics compare post-step TCP to executed target."""
+def execute_loop(policy, env, adapter, read_observation, hinge_address, max_steps, writer=None, video_camera="freeview",
+                 observer=None, progress_fn=None, success_threshold=SUCCESS_THRESHOLD_RAD):
+    """Normal native queued inference; diagnostics compare post-step TCP to executed target.
+
+    Task progress is the door hinge angle at hinge_address by default. Other tasks
+    pass progress_fn() (higher is closer to done) and its success_threshold;
+    results then carry *_progress keys instead of *_hinge_angle keys.
+    """
     import numpy as np
     import torch
     from scipy.spatial.transform import Rotation
+    hinge_mode = progress_fn is None
+    if hinge_mode:
+        progress_fn = lambda: float(env.sim.data.qpos[hinge_address])
     initial_tcp = adapter.site_transform(adapter.tcp_site)
-    initial_hinge = float(env.sim.data.qpos[hinge_address])
+    initial_progress = float(progress_fn())
     current = read_observation()
     history = deque([current, current], maxlen=2)
     position_errors, orientation_errors = [], []
-    best = initial_hinge
-    success_step = 0 if initial_hinge >= SUCCESS_THRESHOLD_RAD else None
+    best = initial_progress
+    success_step = 0 if initial_progress >= success_threshold else None
     chunks = 0
     max_excursion = 0.0
     final_tcp = initial_tcp
-    final_hinge = initial_hinge
+    final_progress = initial_progress
     completed_steps = 0
     error_stage, error = "", ""
     for step in range(max_steps):
@@ -141,7 +150,7 @@ def execute_loop(policy, env, adapter, read_observation, hinge_address, max_step
             error_stage = "policy"
             regenerated = not policy.policy.action_queue
             previous_tcp = final_tcp.copy()
-            previous_hinge = final_hinge
+            previous_progress = final_progress
             if regenerated:
                 chunks += 1
             inputs = {key: np.stack([item[key] for item in history]) for key in RGB_KEYS + LOWDIM_KEYS}
@@ -155,22 +164,23 @@ def execute_loop(policy, env, adapter, read_observation, hinge_address, max_step
             if not np.isfinite(env.sim.data.qpos).all() or not np.isfinite(env.sim.data.qvel).all():
                 raise ValueError("Nonfinite simulator state")
             next_tcp = adapter.site_transform(adapter.tcp_site)
-            next_hinge = float(env.sim.data.qpos[hinge_address])
-            if not np.isfinite(next_tcp).all() or not np.isfinite(next_hinge):
-                raise ValueError("Nonfinite TCP or hinge")
-            final_tcp, final_hinge = next_tcp, next_hinge
+            next_progress = float(progress_fn())
+            if not np.isfinite(next_tcp).all() or not np.isfinite(next_progress):
+                raise ValueError("Nonfinite TCP or task progress")
+            final_tcp, final_progress = next_tcp, next_progress
             position_errors.append(float(np.linalg.norm(final_tcp[:3, 3] - target[:3, 3])) * 1000)
             orientation_errors.append(float(np.rad2deg(Rotation.from_matrix(
                 target[:3, :3].T @ final_tcp[:3, :3]).magnitude())))
             max_excursion = max(max_excursion, float(np.linalg.norm(final_tcp[:3, 3] - initial_tcp[:3, 3])) * 1000)
-            best = max(best, final_hinge)
-            if final_hinge >= SUCCESS_THRESHOLD_RAD and success_step is None:
+            best = max(best, final_progress)
+            if final_progress >= success_threshold and success_step is None:
                 success_step = step + 1
             if observer is not None:
                 error_stage = "trace"
                 observer(step=step, regenerated=regenerated, inputs=inputs, action=action,
                          target=target, packed=packed, actual_before=previous_tcp,
-                         actual_after=final_tcp, hinge_before=previous_hinge, hinge_after=final_hinge,
+                         actual_after=final_tcp, progress_before=previous_progress, progress_after=final_progress,
+                         **(dict(hinge_before=previous_progress, hinge_after=final_progress) if hinge_mode else {}),
                          position_error_mm=position_errors[-1], orientation_error_deg=orientation_errors[-1],
                          queue_remaining=len(policy.policy.action_queue))
             error_stage = "observation"
@@ -181,7 +191,7 @@ def execute_loop(policy, env, adapter, read_observation, hinge_address, max_step
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             break
-    success = not error and final_hinge >= SUCCESS_THRESHOLD_RAD
+    success = not error and final_progress >= success_threshold
     if error:
         category = "controller_error" if error_stage == "controller" else "runtime_error"
     elif success:
@@ -190,14 +200,15 @@ def execute_loop(policy, env, adapter, read_observation, hinge_address, max_step
         category = "reopened"
     elif max_excursion < 5.0:
         category = "no_meaningful_motion"
-    elif best - initial_hinge >= 0.1:
+    elif best - initial_progress >= 0.1:
         category = "partial_closure"
     else:
         category = "timeout"
+    suffix = "_hinge_angle" if hinge_mode else "_progress"
     return dict(
         completed=True, success=bool(success), success_timestep=success_step,
-        max_steps=max_steps, steps_executed=completed_steps, final_hinge_angle=final_hinge,
-        best_hinge_angle=best, initial_hinge_angle=initial_hinge,
+        max_steps=max_steps, steps_executed=completed_steps, **{"final" + suffix: final_progress,
+        "best" + suffix: best, "initial" + suffix: initial_progress},
         mean_tcp_tracking_error_mm=float(np.mean(position_errors)) if position_errors else None,
         max_tcp_tracking_error_mm=max(position_errors) if position_errors else None,
         mean_tcp_orientation_error_deg=float(np.mean(orientation_errors)) if orientation_errors else None,
