@@ -124,7 +124,8 @@ def execute_loop(policy, env, adapter, read_observation, hinge_address, max_step
 
     Task progress is the door hinge angle at hinge_address by default. Other tasks
     pass progress_fn() (higher is closer to done) and its success_threshold;
-    results then carry *_progress keys instead of *_hinge_angle keys.
+    results then carry *_progress keys instead of *_hinge_angle keys. An observer
+    returning False ends the rollout after that step.
     """
     import numpy as np
     import torch
@@ -177,12 +178,17 @@ def execute_loop(policy, env, adapter, read_observation, hinge_address, max_step
                 success_step = step + 1
             if observer is not None:
                 error_stage = "trace"
-                observer(step=step, regenerated=regenerated, inputs=inputs, action=action,
-                         target=target, packed=packed, actual_before=previous_tcp,
-                         actual_after=final_tcp, progress_before=previous_progress, progress_after=final_progress,
-                         **(dict(hinge_before=previous_progress, hinge_after=final_progress) if hinge_mode else {}),
-                         position_error_mm=position_errors[-1], orientation_error_deg=orientation_errors[-1],
-                         queue_remaining=len(policy.policy.action_queue))
+                keep_going = observer(step=step, regenerated=regenerated, inputs=inputs, action=action,
+                                      target=target, packed=packed, actual_before=previous_tcp,
+                                      actual_after=final_tcp, progress_before=previous_progress,
+                                      progress_after=final_progress,
+                                      **(dict(hinge_before=previous_progress, hinge_after=final_progress)
+                                         if hinge_mode else {}),
+                                      position_error_mm=position_errors[-1],
+                                      orientation_error_deg=orientation_errors[-1],
+                                      queue_remaining=len(policy.policy.action_queue))
+                if keep_going is False:  # the observer ends the rollout early
+                    break
             error_stage = "observation"
             history.append(read_observation())
             if writer is not None:
