@@ -4,21 +4,17 @@ Current-TCP-relative RB-Y1 Cartesian Diffusion Policy
 This opt-in branch changes only the coordinate representation of the existing
 command targets. The absolute JSON, HDF5, Cartesian adapter, controller, network
 architecture, observations, optimization settings and 2/16/8 horizons remain the
-baseline. No full training run is launched by preparation or validation.
+baseline. Preparation and validation do not launch full training.
 
 Validation status
 -----------------
 
-.. warning::
-
-   This relative-policy training pipeline is experimental. Full training and
-   post-training learned-policy rollout performance have not been validated.
-   Do not treat this branch as a demonstrated working trained policy.
-
-Preparation checks cover unit tests, dynamic-label reconstruction, recorded
-command replay, and a short debug training/save/reload/EMA smoke test. These
-checks do not establish learning quality or closed-loop task success after
-full training. The branch is shared so collaborators can run and evaluate it.
+The epoch-15 relative policy achieved **92/125 successes (73.6%)**, compared
+with **63/125 (50.4%)** for the epoch-8 absolute policy: an improvement of
+**23.2 percentage points**. Both evaluations used the same five validation
+demonstrations and 25 diffusion seeds per demonstration, with a 2,000-step
+maximum horizon. These results cover saved validation scenes and robot-base
+poses; generalization to unseen layouts or base positions is not established.
 
 Definition
 ----------
@@ -162,3 +158,32 @@ without --debug. The config plans 15 full passes, batch16/workers4/LR1e-4, and
 keeps the original dataset, train/valid split, images, TCP observations and model.
 No long training, push, pull request or parent-submodule update is performed by
 these preparation commands.
+
+Evaluate a trained checkpoint
+-----------------------------
+
+Run from the repository root in the existing ``mobipi`` Conda environment, with
+``PYTHONPATH`` including this repository and ``MUJOCO_GL=egl``. Set the dataset
+path in a local copy of the relative config before training on another machine.
+Use the normal training entry point::
+
+    python robomimic/scripts/train.py \
+      --config robomimic/exps/rby1_close_single_door_relative_cartesian_cmd_115d_15pass.json
+
+Set RUN to the timestamped training directory containing
+``models/model_epoch_15.pth`` and DATASET to the prepared command HDF5::
+
+    DATASET=/path/to/demo_im128_head_wrist_cartesian_cmd.hdf5
+    RUN=/path/to/relative_training_run
+    python robomimic/scripts/evaluate_rby1_cartesian_checkpoints.py \
+      --run-dir "$RUN" --epochs 15 --dataset "$DATASET" \
+      --demo-keys demo_10 demo_19 demo_47 demo_73 demo_111 \
+      --seeds 0 1 42 123 12345 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 \
+      --max-steps 2000 --device cuda --no-save-videos \
+      --output-dir experiment_results/relative_review_eval
+
+Choose a new output directory outside the training run and dataset directory.
+Results are saved as ``rollouts.csv`` and ``metadata.json``. Success requires
+the final door hinge to meet ``>= -0.07853981634`` rad; reopening is failure.
+Dataset files, checkpoints and raw experiment outputs are not included in Git.
+Seeds alone do not guarantee identical results across devices or dependencies.
