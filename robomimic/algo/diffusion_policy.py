@@ -40,6 +40,9 @@ def algo_config_to_class(algo_config):
     """
 
     if algo_config.unet.enabled:
+        if algo_config.get("relative_actions", {}).get("enabled", False):
+            from robomimic.algo.relative_diffusion_policy import RelativeDiffusionPolicyUNet
+            return RelativeDiffusionPolicyUNet, {}
         return DiffusionPolicyUNet, {}
     elif algo_config.transformer.enabled:
         raise NotImplementedError()

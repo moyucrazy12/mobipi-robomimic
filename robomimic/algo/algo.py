@@ -712,4 +712,6 @@ class RolloutPolicy(object):
                         raise ValueError
                     ac_dict[key] = rot
             ac = AcUtils.action_dict_to_vector(ac_dict, action_keys=action_keys)
+        if hasattr(self.policy, "decode_action_for_environment"):
+            ac = self.policy.decode_action_for_environment(ac)
         return ac
