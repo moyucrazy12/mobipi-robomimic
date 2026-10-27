@@ -175,6 +175,16 @@ def extract_trajectory(
     return traj
 
 
+def apply_saved_base(env_meta, dataset_path):
+    """Use the base the demos were recorded with (RB-Y1 datasets without a mobile base need RBY1Mount)."""
+    from robomimic.utils.rby1_saved_model import with_saved_base
+    with h5py.File(dataset_path, "r") as f:
+        demo = next(iter(f["data"].keys()))
+        xml = f["data/{}".format(demo)].attrs.get("model_file", "")
+    with_saved_base(env_meta["env_kwargs"], xml)
+    return env_meta
+
+
 def extract_missing_action_dict(dataset):
     """Generate legacy action dictionaries only for episodes without a saved dictionary."""
     with h5py.File(dataset, "r+") as f:
@@ -289,6 +299,7 @@ def write_traj_to_file(args, output_path, total_samples, total_run, processes, i
     # global metadata
     data_grp.attrs["total"] = total_samples.value
     env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
+    apply_saved_base(env_meta, args.dataset)
     if args.generative_textures:
         env_meta["env_kwargs"]["generative_textures"] = "100p"
     if args.randomize_cameras:
@@ -360,6 +371,7 @@ def extract_multiple_trajectories_with_error(process_num, current_work_array, wo
         env_meta = MG_FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
     else:
         env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
+    apply_saved_base(env_meta, args.dataset)
     if args.generative_textures:
         env_meta["env_kwargs"]["generative_textures"] = "100p"
     env_meta["env_kwargs"]["randomize_cameras"] = args.randomize_cameras
