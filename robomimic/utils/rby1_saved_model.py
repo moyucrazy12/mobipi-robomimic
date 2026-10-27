@@ -7,6 +7,10 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import robosuite
 import robocasa
+try:
+    import mobipi.envs  # noqa: F401  registers Mobi-pi task variants such as CloseDrawerLeft
+except ImportError:
+    pass
 from robosuite.environments.base import MujocoEnv
 from robocasa.environments.kitchen.kitchen import Kitchen
 
@@ -23,9 +27,15 @@ def local_xml(xml):
         element.set('file',value)
     return ET.tostring(root,encoding='unicode')
 
+def with_saved_base(kwargs,xml):
+    """RB-Y1 now defaults to a mobile base; demos saved without one use the fixed RBY1Mount."""
+    if 'base_types' not in kwargs and 'mobilebase0_joint_mobile_forward' not in xml:
+        kwargs['base_types']='RBY1Mount'
+    return kwargs
+
 def create_saved_env(metadata,group,render=False):
     xml=local_xml(group.attrs['model_file']);ep=json.loads(group.attrs['ep_meta'])
-    kwargs=copy.deepcopy(metadata['env_kwargs'])
+    kwargs=with_saved_base(copy.deepcopy(metadata['env_kwargs']),xml)
     kwargs.update(has_renderer=False,has_offscreen_renderer=render,use_camera_obs=False,ignore_done=True)
     original_load=Kitchen._load_model;original_initialize=MujocoEnv._initialize_sim
     audits=[]
