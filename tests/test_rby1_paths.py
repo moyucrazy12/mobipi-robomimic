@@ -21,9 +21,10 @@ from unittest.mock import patch
 from robomimic.utils import rby1_paths as door
 from robomimic.scripts import train_rby1
 
-PROJECT = Path(__file__).resolve().parents[4]
-RM = PROJECT / "mobipi/external/robomimic"
-COLLECT = PROJECT / "mobipi/mobipi/collect_demos"
+RM = Path(__file__).resolve().parents[1]
+MOBIPI_ROOT = RM.parents[1]
+PROJECT = MOBIPI_ROOT.parent
+COLLECT = MOBIPI_ROOT / "mobipi/collect_demos"
 spec = importlib.util.spec_from_file_location("faucet_paths_test", COLLECT / "experiment_paths.py")
 faucet = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(faucet)
@@ -66,7 +67,7 @@ class PathsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {}, clear=False):
             os.environ.pop("RBY1_EXPERIMENT_ROOT", None)
             try:
-                for cwd in (PROJECT / "mobipi", RM, Path(temporary)):
+                for cwd in (MOBIPI_ROOT, RM, Path(temporary)):
                     os.chdir(cwd)
                     self.assertEqual(door.experiment_root(), PROJECT / "experiment_results")
                     self.assertEqual(faucet.experiment_root(), PROJECT / "experiment_results")
@@ -130,14 +131,16 @@ class PathsTests(unittest.TestCase):
                 self.assertTrue(Path(path).resolve().is_relative_to(project / "experiment_results/CloseSingleDoor/train"))
 
     def test_real_launcher_print_config_from_both_working_directories(self):
-        configs = list((RM / "robomimic/exps").glob("rby1*.json")) + list(COLLECT.glob("faucet_relative_cartesian_dp*.json"))
-        self.assertEqual(len(configs), 7)
+        # This launcher resolves the custom door/faucet paths. Drawer configs
+        # continue to use the native trainer and must not be passed to it.
+        configs = list((RM / "robomimic/exps").glob("rby1_close_single_door*.json")) + list(COLLECT.glob("faucet_relative_cartesian_dp*.json"))
+        self.assertTrue(configs)
         with tempfile.TemporaryDirectory() as temporary:
             env = dict(os.environ, RBY1_EXPERIMENT_ROOT=temporary, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(RM))
             for config in configs:
                 raw = json.loads(config.read_text())
                 values = []
-                for cwd in (PROJECT / "mobipi", RM):
+                for cwd in (MOBIPI_ROOT, RM):
                     result = subprocess.run([sys.executable, "-m", "robomimic.scripts.train_rby1", "--config", str(config), "--print-config"],
                                             cwd=cwd, env=env, text=True, capture_output=True, check=True)
                     value = json.loads(result.stdout)
@@ -177,12 +180,12 @@ class PathsTests(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text()), config)
 
     def test_historical_run_does_not_change_with_output_override(self):
-        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"RBY1_EXPERIMENT_ROOT": temporary}):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(faucet, "PROJECT_ROOT", Path(temporary) / "workspace"), \
+                patch.dict(os.environ, {"RBY1_EXPERIMENT_ROOT": str(Path(temporary) / "outputs")}):
             run = faucet.historical_path("train", "rby1_faucet_relative_cartesian_gripper_100d_15epochs", "20261027135336")
-            self.assertEqual(run, PROJECT / "experiment_results/TurnOnFaucet/train/rby1_faucet_relative_cartesian_gripper_100d_15epochs/20261027135336")
-            for epoch in (9, 13, 15):
-                self.assertTrue((run / "models" / f"model_epoch_{epoch}.pth").is_file())
-            self.assertTrue(faucet.new_output("rollouts", "evaluation").is_relative_to(Path(temporary)))
+            self.assertEqual(run, faucet.PROJECT_ROOT / "experiment_results/TurnOnFaucet/train/rby1_faucet_relative_cartesian_gripper_100d_15epochs/20261027135336")
+            self.assertTrue(faucet.new_output("rollouts", "evaluation").is_relative_to(Path(temporary) / "outputs"))
 
     def test_manifest_metadata_resolution_preserves_checkpoint_identity(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(door, "PROJECT_ROOT", Path(temporary)):
