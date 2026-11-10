@@ -1,4 +1,5 @@
-"""Same Diffusion Policy networks and queue; only the Cartesian action frame differs."""
+"""Native Diffusion Policy with relative pose9 and an optional scalar gripper."""
+import numpy as np
 from robomimic.algo.diffusion_policy import DiffusionPolicyUNet
 from robomimic.utils import tensor_utils as T
 from robomimic.utils.rby1_relative_cartesian import (
@@ -11,13 +12,16 @@ class RelativeDiffusionPolicyUNet(DiffusionPolicyUNet):
         relative = self.algo_config.relative_actions
         self.relative_arm = relative.arm
         self.position_key, self.quaternion_key = tcp_observation_keys(self.relative_arm)
+        action_keys = list(self.global_config.train.action_keys)
+        self.has_gripper_action = action_keys == ["actions_eef_cmd", "actions_gripper"]
         if (dict(self.algo_config.horizon) != dict(observation_horizon=2, prediction_horizon=16, action_horizon=8)
                 or self.global_config.train.frame_stack != 2
                 or self.global_config.train.hdf5_normalize_obs
-                or list(self.global_config.train.action_keys) != ["actions_eef_cmd"]
+                or action_keys not in (["actions_eef_cmd"], ["actions_eef_cmd", "actions_gripper"])
+                or self.ac_dim != (10 if self.has_gripper_action else 9)
                 or self.global_config.train.action_config["actions_eef_cmd"].get("format") is not None
                 or not {self.position_key, self.quaternion_key}.issubset(self.obs_shapes)):
-            raise ValueError("Relative baseline requires 2/16/8, raw selected-arm TCP observations and native 9D command format")
+            raise ValueError("Relative baseline requires 2/16/8, raw selected-arm TCP observations and pose9 with optional scalar gripper")
         self.relative_anchor = None
         super()._create_networks()
 
@@ -43,4 +47,7 @@ class RelativeDiffusionPolicyUNet(DiffusionPolicyUNet):
         """
         if self.relative_anchor is None:
             raise RuntimeError("No measured replan anchor; call through the native rollout policy")
-        return transform_to_pose9(decode_relative_target(self.relative_anchor, action))
+        pose = transform_to_pose9(decode_relative_target(self.relative_anchor, action[:9]))
+        if getattr(self, "has_gripper_action", False):
+            return np.concatenate((pose, np.asarray(action)[9:10]))
+        return pose

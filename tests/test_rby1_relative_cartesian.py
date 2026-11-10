@@ -144,11 +144,34 @@ class RelativeQueueTests(unittest.TestCase):
         model = object.__new__(RelativeDiffusionPolicyUNet)
         model.global_config = config
         model.algo_config = config.algo
+        model.ac_dim = 9
         model.obs_shapes = dict.fromkeys(tcp_observation_keys("left"), (3,))
         with patch.object(DiffusionPolicyUNet, "_create_networks") as create:
             model._create_networks()
             create.assert_called_once()
         self.assertIsNone(model.relative_anchor)
+
+    def test_optional_gripper_is_not_transformed(self):
+        from robomimic.config import config_factory
+        config = config_factory("diffusion_policy")
+        config.algo.relative_actions.enabled = True
+        config.algo.relative_actions.arm = "right"
+        config.train.frame_stack = 2
+        config.train.action_keys = ["actions_eef_cmd", "actions_gripper"]
+        config.train.action_config = {k: {"normalization": "min_max"} for k in config.train.action_keys}
+        model = object.__new__(RelativeDiffusionPolicyUNet)
+        model.global_config = config
+        model.algo_config = config.algo
+        model.ac_dim = 10
+        model.obs_shapes = dict.fromkeys(tcp_observation_keys("right"), (3,))
+        with patch.object(DiffusionPolicyUNet, "_create_networks"):
+            model._create_networks()
+        model.relative_anchor = tcp_pose([1, 2, 3], [0, 0, 0, 1])
+        relative = transform_to_pose9(tcp_pose([.1, 0, 0], [0, 0, 0, 1]))
+        for gripper in (-1., 1.):
+            action = model.decode_action_for_environment(np.r_[relative, gripper])
+            np.testing.assert_allclose(action[:3], [1.1, 2, 3])
+            self.assertEqual(action[-1], gripper)
 
     def test_native_queue_anchor_held_for_eight_actions_and_refreshed(self):
         # Exercise real relative subclass and real RolloutPolicy unnormalization,

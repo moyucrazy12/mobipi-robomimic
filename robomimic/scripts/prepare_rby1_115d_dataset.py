@@ -3,6 +3,8 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+
+from robomimic.utils.rby1_paths import artifact_path
 import shutil
 import time
 import h5py
@@ -17,9 +19,9 @@ CAMERAS=['robot0_head_camera','robot0_left_eye_in_hand']
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--phase',choices=['smoke','render','finalize'],required=True)
 parser.add_argument('--source',required=True,help='Read-only original 115-demo HDF5')
-parser.add_argument('--rendered',required=True,help='New rendered HDF5 output')
-parser.add_argument('--output',required=True,help='New Cartesian-command HDF5 output')
-parser.add_argument('--work-dir',required=True,help='Local reports, smoke file and command cache')
+parser.add_argument("--rendered",default=str(artifact_path("CloseSingleDoor", "demos", "new_115_demos", "demo_im128_head_wrist.hdf5")),help="New rendered HDF5 output")
+parser.add_argument("--output",default=str(artifact_path("CloseSingleDoor", "demos", "new_115_demos", "demo_im128_head_wrist_cartesian_cmd.hdf5")),help="New Cartesian-command HDF5 output")
+parser.add_argument("--work-dir",default=str(artifact_path("CloseSingleDoor", "diagnostics", "rby1_115d_preparation_new")),help="Local reports, smoke file and command cache")
 args=parser.parse_args()
 SOURCE=Path(args.source).expanduser().resolve()
 RENDERED=Path(args.rendered).expanduser().resolve()
@@ -28,6 +30,8 @@ ROOT=Path(args.work_dir).expanduser().resolve()
 if len({SOURCE,RENDERED,FINAL})!=3:
     raise ValueError('Source and derivative paths must be distinct')
 ROOT.mkdir(parents=True,exist_ok=True)
+RENDERED.parent.mkdir(parents=True,exist_ok=True)
+FINAL.parent.mkdir(parents=True,exist_ok=True)
 
 def digest(p):
     h=hashlib.sha256()

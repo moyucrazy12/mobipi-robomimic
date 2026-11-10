@@ -6,11 +6,13 @@ import csv
 import json
 from pathlib import Path
 
+from robomimic.utils.rby1_paths import new_output
+
 import h5py
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from robomimic.utils.rby1_cartesian import RBY1CartesianAdapter
+from robomimic.utils.rby1_cartesian import RBY1CartesianAdapter, make_transform, source_command_as_cartesian
 
 
 def controller_snapshot(env):
@@ -108,6 +110,20 @@ def door_contact(env, door_bodies):
     return count
 
 
+def robot_scene_contacts(env):
+    """Report robot/environment contacts; door-touch contacts may be intentional."""
+    model, data = env.sim.model._model, env.sim.data._data
+    contacts = []
+    for contact in data.contact[:data.ncon]:
+        geoms = [model.geom(int(g)) for g in (contact.geom1, contact.geom2)]
+        names = [model.body(int(g.bodyid)).name for g in geoms]
+        robot = [name.startswith(("robot0_", "gripper0_")) for name in names]
+        if sum(robot) == 1:
+            contacts.append({"bodies": names, "geoms": [g.name for g in geoms],
+                             "distance_m": float(contact.dist)})
+    return contacts
+
+
 def summarize_trials(rows):
     summary = {}
     for configuration in sorted({r["configuration"] for r in rows}):
@@ -142,7 +158,10 @@ def teacher_forced(args, metadata, replay_config, xml, episode_metadata, states,
               "reset_protocol": "sim.reset + saved time/qpos/qvel/act; force controller update/reset goals; fixed initial q0 and gripper history",
               "limitation": "Dataset does not save controller history or MuJoCo solver warm-start buffers",
               "region_definition": "robot/door-panel contact at recorded state t or t+1"}
-    for label, config in (("source_exact", source_config), ("replay_left_only", replay_config)):
+    configurations = [("source_exact", source_config)]
+    if args.controller:
+        configurations.append(("replay_left_only", replay_config))
+    for label, config in configurations:
         env = diagnostic_env(metadata, config, xml, episode_metadata)
         try:
             robot = env.robots[0]
@@ -200,12 +219,7 @@ def teacher_forced(args, metadata, replay_config, xml, episode_metadata, states,
                             # Additional control: round-trip the ORIGINAL IK
                             # command through the same 9D TCP adapter. This does
                             # not change actions_eef or the policy action format.
-                            start, end = robot.composite_controller.joint_action_policy.action_split_indexes()["left"]
-                            reference = source_actions[t, start:end]
-                            commanded_world_tcp = make_transform(reference[:3], Rotation.from_rotvec(reference[3:]).as_matrix()) @ np.linalg.inv(adapter.tcp_to_reference)
-                            commanded_base_tcp = np.linalg.inv(base_before) @ commanded_world_tcp
-                            adapter_action = np.concatenate((commanded_base_tcp[:3, 3], quaternion_to_rotation6d(
-                                Rotation.from_matrix(commanded_base_tcp[:3, :3]).as_quat())))
+                            adapter_action = source_command_as_cartesian(adapter, source_actions[t])
                             # Preserve the recorded nuisance commands in this
                             # round-trip control, so only pose conversion and
                             # packing are compared with the source baseline.
@@ -266,12 +280,22 @@ def main():
     parser.add_argument("--demo", default="demo_0")
     parser.add_argument("--controller", help="Optional established config override with left-only IK refs; otherwise use unchanged dataset config")
     parser.add_argument("--steps", type=int, help="Optional step limit")
+    parser.add_argument("--method", choices=("cartesian", "source", "commanded-cartesian"), default="cartesian",
+                        help="Replay measured next-state poses, original commands, or commands encoded as 9D TCP targets")
+    parser.add_argument("--action-key", default="actions_eef",
+                        choices=("actions_eef", "actions_eef_cmd"), help="Stored 9D targets for --method cartesian")
+    parser.add_argument("--recorded-holds", action="store_true",
+                        help="Diagnostic: preserve recorded non-left commands to isolate left-pose conversion")
+    parser.add_argument("--render", action="store_true", help="Open the interactive MuJoCo viewer")
+    parser.add_argument("--output", default=str(new_output("CloseSingleDoor", "diagnostics", "rby1_replay")), help="New directory for replay summary and per-step errors/contacts")
     parser.add_argument("--check-source-poses", action="store_true", help="Check transform chain against five saved simulator states before replay")
     parser.add_argument("--teacher-forced", action="store_true", help="Independent saved-state source/Cartesian diagnostics; no open-loop replay")
     parser.add_argument("--samples", type=int, default=64, help="Evenly spaced teacher-forced samples plus contact/motion boundaries")
-    parser.add_argument("--report", default="experiment_results/rby1_teacher_forced.json")
+    parser.add_argument("--report", default=str(new_output("CloseSingleDoor", "diagnostics", "rby1_teacher_forced", ".json")))
     parser.add_argument("--command-roundtrip-check", action="store_true", help="Additionally round-trip the original IK command through the Cartesian adapter")
     args = parser.parse_args()
+    if args.teacher_forced and args.action_key != "actions_eef":
+        raise ValueError("The achieved-state teacher-forced diagnostic requires --action-key actions_eef")
     import robosuite
     import robocasa  # noqa: F401: register kitchen environments
     from robosuite.controllers import load_composite_controller_config
@@ -279,9 +303,6 @@ def main():
     with h5py.File(Path(args.dataset).expanduser(), "r") as dataset:
         metadata = json.loads(dataset["data"].attrs["env_args"])
         demo = dataset[f"data/{args.demo}"]
-        if demo["actions_eef"].attrs["quaternion_key"] != "robot0_base_to_left_eef_quat_site":
-            raise ValueError("Adapter requires actual grip-site orientation targets")
-        actions = demo["actions_eef"][:]
         source_actions = demo["actions"][:]
         world_positions = demo["obs/robot0_left_eef_pos"][:]
         world_quaternions = demo["obs/robot0_left_eef_quat_site"][:]
@@ -291,6 +312,16 @@ def main():
         source_quaternion = demo["obs/robot0_base_to_left_eef_quat_site"][:]
         xml = demo.attrs["model_file"]
         episode_metadata = json.loads(demo.attrs["ep_meta"])
+        if args.method == "cartesian" or args.teacher_forced:
+            stored = demo[args.action_key]
+            if args.action_key == "actions_eef":
+                if stored.attrs["quaternion_key"] != "robot0_base_to_left_eef_quat_site":
+                    raise ValueError("Adapter requires actual grip-site orientation targets")
+            elif stored.attrs["tcp_site"] != "gripper0_left_grip_site":
+                raise ValueError("Unexpected command TCP site")
+            actions = stored[:]
+        else:
+            actions = source_actions  # only the length is needed for command replay
     kwargs = copy.deepcopy(metadata["env_kwargs"])
     # Prefer the exact recorded configuration. An explicit override reproduces
     # the previous 25D replay for diagnostics, without modifying any asset file.
@@ -305,13 +336,16 @@ def main():
     if args.teacher_forced:
         if args.samples < 2:
             raise ValueError("At least two samples required")
-        if not args.controller:
-            raise ValueError("Teacher-forced comparison requires --controller for the previous 25D replay configuration")
         teacher_forced(args, metadata, config, xml, episode_metadata, states, source_actions,
                        actions, world_positions, world_quaternions)
         return
-    kwargs.update(controller_configs=config, has_renderer=False, has_offscreen_renderer=False,
+    output = Path(args.output).expanduser() if args.output else None
+    if output is not None:
+        output.mkdir(parents=True, exist_ok=False)
+    kwargs.update(controller_configs=config, has_renderer=args.render, has_offscreen_renderer=False,
                   use_camera_obs=False, ignore_done=True)
+    if args.render:
+        kwargs.update(renderer="mjviewer", render_camera=None)
     env = robosuite.make(metadata["env_name"], **kwargs)
     try:
         env.set_ep_meta(episode_metadata)
@@ -322,8 +356,6 @@ def main():
         env.sim.forward()
         adapter = RBY1CartesianAdapter(env)
         if args.check_source_poses:
-            from robomimic.utils.rby1_cartesian import make_transform
-
             for t in np.unique(np.linspace(0, len(states) - 1, 5, dtype=int)):
                 env.sim.set_state_from_flattened(states[t])
                 env.sim.forward()
@@ -339,19 +371,34 @@ def main():
             env.sim.set_state_from_flattened(initial_state)
             env.sim.forward()
             adapter = RBY1CartesianAdapter(env)
+        if args.render:
+            env.viewer.update()
         base_initial = adapter.site_transform(adapter.base_site)
         right_initial = adapter.site_transform(adapter.robot.gripper["right"].important_sites["grip_site"])
         right_controller = adapter.controller.part_controllers["right"]
         right_q_initial = np.asarray(env.sim.data.qpos[right_controller.qpos_index]).copy()
         errors, base_drift, right_drift, right_joint_drift = [], [], [], []
+        rows = []
         actual_positions = []
+        hinge_name, hinge_index, _ = door_geometry(env, episode_metadata)
         count = min(len(actions), args.steps) if args.steps is not None else len(actions)
         if count < 1:
             raise ValueError("At least one replay step is required")
         for t in range(count):
             action = actions[t]
-            target = adapter.target_world(action)
-            packed = adapter(action)
+            next_t = min(t + 1, len(world_positions) - 1)
+            target = make_transform(world_positions[next_t], Rotation.from_quat(world_quaternions[next_t]).as_matrix())
+            if args.method == "commanded-cartesian":
+                # Retain the same fixed holds as policy evaluation; only the
+                # left target comes from the original recorded IK command.
+                action = source_command_as_cartesian(adapter, source_actions[t])
+            if args.recorded_holds:
+                slices = adapter.controller._whole_body_controller_action_split_indexes
+                adapter.holds = {part: source_actions[t, slice(*slices[part])].copy()
+                                 for part in adapter.holds}
+            packed = source_actions[t] if args.method == "source" else adapter(action)
+            if packed.shape != (env.action_dim,):
+                raise ValueError("Replay action dimension does not match unchanged controller")
             env.step(packed)
             if not np.isfinite(env.sim.data.qpos).all() or not np.isfinite(env.sim.data.qvel).all():
                 raise ValueError(f"Non-finite simulator state at step {t}")
@@ -363,17 +410,44 @@ def main():
             right = adapter.site_transform(adapter.robot.gripper["right"].important_sites["grip_site"])
             right_drift.append(np.linalg.norm(right[:3, 3] - right_initial[:3, 3]))
             right_joint_drift.append(np.max(np.abs(env.sim.data.qpos[right_controller.qpos_index] - right_q_initial)))
+            contacts = robot_scene_contacts(env)
+            rows.append({"timestep": t, "target_xyz_world": json.dumps(target[:3, 3].tolist()),
+                         "actual_xyz_world": json.dumps(actual[:3, 3].tolist()),
+                         "position_error_m": float(errors[-1][0]), "orientation_error_deg": float(errors[-1][1]),
+                         "base_drift": float(base_drift[-1]), "scene_contact_count": len(contacts),
+                         "scene_contacts": json.dumps(contacts), "success": bool(env._check_success())})
             if t % 250 == 0:
                 print(f"step {t}/{count}: position={errors[-1][0]:.6f} m, rotation={errors[-1][1]:.4f} deg", flush=True)
         errors = np.asarray(errors)
-        print(json.dumps({"steps": count, "position_mean_m": float(errors[:, 0].mean()),
+        summary = {"demo": args.demo, "method": args.method, "steps": count,
+                          "action_key": args.action_key if args.method == "cartesian" else "actions",
+                          "recorded_holds": args.recorded_holds,
+                          "dataset": str(Path(args.dataset).expanduser().resolve()),
+                          "error_reference": "Recorded next-state TCP pose for all replay methods",
+                          "base_world_transform": base_initial.tolist(),
+                          "position_mean_m": float(errors[:, 0].mean()),
                           "position_max_m": float(errors[:, 0].max()), "orientation_mean_deg": float(errors[:, 1].mean()),
                           "orientation_max_deg": float(errors[:, 1].max()), "base_transform_max_drift": float(max(base_drift)),
                           "right_tcp_max_drift_m": float(max(right_drift)), "right_joint_max_drift_rad": float(max(right_joint_drift)),
                           "left_tcp_xyz_span_m": np.ptp(actual_positions, axis=0).tolist(),
                           "action_dim": int(packed.size), "finite": True, "tcp_site": adapter.tcp_site,
                           "reference_site": adapter.reference_site, "base_site": adapter.base_site,
-                          "tcp_to_reference": adapter.tcp_to_reference.tolist(), "success": bool(env._check_success())}, indent=2))
+                          "final_task_state": {"door_joint": hinge_name,
+                                               "door_angle_rad": float(env.sim.data.qpos[hinge_index]),
+                                               "success": bool(env._check_success())},
+                          "tcp_to_reference": adapter.tcp_to_reference.tolist(), "success": bool(env._check_success()),
+                          "scene_contact_steps": sum(r["scene_contact_count"] > 0 for r in rows),
+                          "first_scene_contact_step": next((r["timestep"] for r in rows if r["scene_contact_count"]), None),
+                          "limitation": ("Open-loop diagnostic; measured next-state TCP targets differ from original controller commands. Not a training gate."
+                                         if args.method == "cartesian" and args.action_key == "actions_eef" else
+                                         "Full command replay; path errors compare actual TCP with recorded next achieved TCP, not with the command target.")}
+        if output is not None:
+            (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+            with (output / "trajectory.csv").open("w", newline="") as stream:
+                writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+                writer.writeheader()
+                writer.writerows(rows)
+        print(json.dumps(summary, indent=2))
     finally:
         env.close()
 

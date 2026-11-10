@@ -4,6 +4,8 @@ from collections import Counter, defaultdict
 import json
 import math
 from pathlib import Path
+
+from robomimic.utils.rby1_paths import new_output, migrated_input
 import statistics
 
 from robomimic.utils.rby1_evaluation import (
@@ -143,7 +145,7 @@ def plots(output, summary, losses):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, help="Evaluation directory or rollouts.csv")
-    parser.add_argument("--output-dir", required=True, help="Separate report directory")
+    parser.add_argument("--output-dir", default=str(new_output("CloseSingleDoor", "reports", "rby1_evaluation")), help="Separate report directory")
     parser.add_argument("--run-dir", help="Optional training run, otherwise use evaluation metadata")
     parser.add_argument("--plots", action="store_true", help="Optional CPU matplotlib plots")
     args = parser.parse_args(argv)
@@ -165,7 +167,7 @@ def main(argv=None):
     metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
     output = Path(args.output_dir).expanduser().resolve()
     run_value = args.run_dir or metadata.get("protocol", {}).get("run_dir")
-    run = Path(run_value).expanduser().resolve() if run_value else None
+    run = (Path(args.run_dir).expanduser().resolve() if args.run_dir else migrated_input(run_value)) if run_value else None
     if output == csv_path.parent or (run and (output == run or run in output.parents)):
         raise ValueError("Use a separate report directory outside the active training run")
     output.mkdir(parents=True, exist_ok=True)

@@ -7,6 +7,8 @@ can differ from grip-site orientations. The source file is always read-only.
 import argparse
 import json
 from pathlib import Path
+
+from robomimic.utils.rby1_paths import new_output
 import shutil
 
 import h5py
@@ -106,7 +108,7 @@ def prepare(source, output, quaternion_key, selected_demo=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", required=True)
-    parser.add_argument("--output", required=True)
+    parser.add_argument("--output", default=str(new_output("CloseSingleDoor", "demos", "rby1_achieved_cartesian", ".hdf5")))
     parser.add_argument("--demo", help="Copy only this demo for the first sanity/replay test")
     parser.add_argument("--quaternion-key", required=True, choices=[
         "robot0_base_to_left_eef_quat", "robot0_base_to_left_eef_quat_site"])

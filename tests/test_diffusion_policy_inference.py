@@ -57,7 +57,7 @@ class DiffusionInferenceTests(unittest.TestCase):
                 ddim=SimpleNamespace(enabled=True, num_inference_timesteps=2),
             ),
             obs_shapes={"state": (3,)}, ac_dim=3, device=torch.device("cpu"),
-            noise_scheduler=Scheduler(),
+            noise_scheduler=Scheduler(), inference_noise_generator=None,
         )
         action = DiffusionPolicyUNet._get_action_trajectory(
             policy, obs_dict={"state": torch.zeros(1, 2, 3)})

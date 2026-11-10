@@ -73,20 +73,27 @@ class TrainingDataTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "overlap"):
             self.load_split()
 
-    def test_validation_uses_training_scale_for_single_and_multiple_datasets(self):
+    def test_validation_uses_training_scale_and_release_clipping(self):
+        # Release intentionally clips min-max normalized actions to [-1, 1].
+        # Include interior values so clipping cannot hide a wrong normalizer.
+        for index, path in enumerate(self.paths):
+            with h5py.File(path, "r+") as dataset:
+                values = np.array([-2, 1, 2, 10], dtype=np.float32) + index
+                dataset["data/demo_1/actions"][...] = np.column_stack((values, values))
         for count in (1, 2):
             with self.subTest(dataset_count=count):
                 self.config.train.data = [{"path": path} for path in self.paths[:count]]
                 train, valid = self.load_split()
-                independently_normalized = valid[0]["actions"].copy()
+                independently_normalized = np.array([valid[i]["actions"][0].copy() for i in range(4)])
                 stats = train.get_action_normalization_stats()
                 valid.set_action_normalization_stats(stats)
-                raw_action = np.array([10, 10], dtype=np.float32)
+                raw_action = np.column_stack(([-2, 1, 2, 10], [-2, 1, 2, 10])).astype(np.float32)
                 expected = (raw_action - stats["actions"]["offset"][0]) / stats["actions"]["scale"][0]
-                np.testing.assert_allclose(valid[0]["actions"][0], expected)
-                self.assertFalse(np.allclose(valid[0]["actions"], independently_normalized))
-                # Held-out data may exceed training bounds; it must keep its scale.
-                self.assertTrue(np.all(valid[0]["actions"][0] > 1))
+                actual = np.array([valid[i]["actions"][0] for i in range(4)])
+                np.testing.assert_allclose(actual, np.clip(expected, -1, 1))
+                self.assertFalse(np.allclose(actual, independently_normalized))
+                self.assertTrue(np.all(expected[-1] > 1))
+                np.testing.assert_array_equal(actual[-1], [1, 1])
 
     def test_language_enabled_and_direct_constructor_default_are_preserved(self):
         for kwargs in ({}, {"load_language": True}):

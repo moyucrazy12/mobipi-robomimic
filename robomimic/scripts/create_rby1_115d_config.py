@@ -3,14 +3,16 @@ import argparse
 import copy
 import json
 from pathlib import Path
+
+from robomimic.utils.rby1_paths import artifact_path, new_output, ROBOMIMIC_ROOT, resolve_training_paths
 import numpy as np
 from torch.utils.data import DataLoader
 from robomimic.config import config_factory
 from robomimic.utils import obs_utils as O,train_utils as T
 parser=argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--work-dir',required=True,help='Directory containing successful dataset/replay reports')
-parser.add_argument('--base-config',default='robomimic/exps/rby1_close_single_door_cartesian_cmd_diffusion_fullpass.json')
-parser.add_argument('--output',required=True,help='New config; existing files are never overwritten')
+parser.add_argument("--work-dir",default=str(artifact_path("CloseSingleDoor", "diagnostics", "rby1_115d_preparation_new")),help="Directory containing successful dataset/replay reports")
+parser.add_argument("--base-config",default=str(ROBOMIMIC_ROOT / "robomimic/exps/rby1_close_single_door_cartesian_cmd_diffusion_fullpass.json"))
+parser.add_argument("--output",default=str(new_output("CloseSingleDoor", "configs", "rby1_115d", ".json")),help="New config; existing files are never overwritten")
 args=parser.parse_args()
 ROOT=Path(args.work_dir).expanduser().resolve()
 report=json.loads((ROOT/'dataset_report.json').read_text())
@@ -20,7 +22,7 @@ assert gate['dataset']==report['final'] and gate['source_sha256']==report['sourc
 original=Path(args.base_config).expanduser()
 output=Path(args.output).expanduser()
 assert not output.exists()
-base=json.loads(original.read_text());new=copy.deepcopy(base)
+base=resolve_training_paths(json.loads(original.read_text()));new=copy.deepcopy(base)
 new['experiment']['name']='rby1_close_single_door_cartesian_cmd_115d_15pass'
 new['train']['data'][0]['path']=report['final']
 new['train']['num_epochs']=15
@@ -47,6 +49,7 @@ assert new['train']['num_data_workers']==4 and new['train']['batch_size']==16
 assert new['train']['action_keys']==['actions_eef_cmd'] and new['train']['action_config']['actions_eef_cmd']['normalization']=='min_max'
 assert new['algo']==base['algo'] and new['observation']==base['observation']
 assert not new['experiment']['rollout']['enabled'] and new['experiment']['save']['every_n_epochs']==1
+output.parent.mkdir(parents=True,exist_ok=True)
 output.write_text(json.dumps(new,indent=4)+'\n')
 def changes(a,b,path=''):
     rows=[]
