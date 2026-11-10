@@ -8,7 +8,7 @@ import numpy as np
 import robosuite
 import robocasa
 try:
-    import mobipi.envs  # noqa: F401  registers Mobi-pi task variants such as CloseDrawerLeft
+    import rby1.robot.kitchen_drawer  # noqa: F401  registers CloseDrawerLeft
 except ImportError:
     pass
 from robosuite.environments.base import MujocoEnv

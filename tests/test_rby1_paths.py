@@ -5,7 +5,6 @@ import contextlib
 import copy
 import datetime
 import importlib.util
-from importlib import import_module
 import io
 import json
 import os
@@ -28,28 +27,14 @@ PROJECT = MOBIPI_ROOT.parent
 COLLECT = MOBIPI_ROOT / "mobipi/collect_demos"
 if not (COLLECT / "experiment_paths.py").is_file():
     raise unittest.SkipTest("Cross-repository path checks require the MobiPi superproject checkout")
-faucet = import_module("mobipi.collect_demos.experiment_paths")
-
-
-def implementation_path(path):
-    """Source-inspection checks follow legacy module redirects after a move."""
-    tree = ast.parse(path.read_text())
-    for node in tree.body:
-        if (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
-                and isinstance(node.value.func, ast.Name) and node.value.func.id == "redirect"):
-            target = ast.literal_eval(node.value.args[1])
-            return Path(importlib.util.find_spec(target).origin)
-    return path
-
-
-def source_text(path):
-    return implementation_path(path).read_text()
-
+spec = importlib.util.spec_from_file_location("faucet_paths_test", COLLECT / "experiment_paths.py")
+faucet = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(faucet)
 
 
 def parser_only(path):
     """Execute only existing argparse construction statements, without module imports."""
-    tree = ast.parse(source_text(path))
+    tree = ast.parse(path.read_text())
     candidates = [n.body for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("main", "parser")]
     candidates += [tree.body]
     candidates += [n.body for n in tree.body if isinstance(n, ast.If)]
@@ -72,8 +57,7 @@ def parser_only(path):
                      artifact_path=paths.artifact_path, new_output=paths.new_output,
                      historical_path=faucet.historical_path, ROBOMIMIC_ROOT=RM,
                      DEFAULT_RUN=faucet.historical_path("train", "rby1_faucet_relative_cartesian_gripper_100d_15epochs", "20261027135336"),
-                     TASKS={"TurnOnSinkFaucet": object()},
-                     CONFIG_ROOT=getattr(faucet, "CONFIG_ROOT", COLLECT))
+                     TASKS={"TurnOnSinkFaucet": object()})
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), "exec"), scope)
         return scope.get("parser", scope.get("result"))
     raise AssertionError(f"No parser found in {path}")
@@ -265,7 +249,7 @@ class PathsTests(unittest.TestCase):
             self.assertEqual(list(Path(temporary).iterdir()), [])
 
     def test_stage_dependent_faucet_defaults_and_override(self):
-        source = ast.parse(source_text(COLLECT / "faucet_pipeline.py"))
+        source = ast.parse((COLLECT / "faucet_pipeline.py").read_text())
         main = next(n for n in source.body if isinstance(n, ast.FunctionDef) and n.name == "main")
         branch = next(n for n in main.body if isinstance(n, ast.If) and ast.unparse(n.test) == "args.output is None")
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"RBY1_EXPERIMENT_ROOT": temporary}):
@@ -281,7 +265,7 @@ class PathsTests(unittest.TestCase):
 
     def test_evaluation_check_only_and_pipeline_defaults(self):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"RBY1_EXPERIMENT_ROOT": temporary}):
-            tree = ast.parse(source_text(COLLECT / "evaluate_faucet_dp.py"))
+            tree = ast.parse((COLLECT / "evaluate_faucet_dp.py").read_text())
             main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
             assignment = next(n for n in main.body if isinstance(n, ast.Assign)
                               and any(isinstance(t, ast.Attribute) and t.attr == "output" for t in n.targets))
@@ -292,7 +276,7 @@ class PathsTests(unittest.TestCase):
                     exec(compile(ast.Module(body=[assignment], type_ignores=[]), "eval_paths", "exec"), scope)
                     category = "diagnostics" if check_only else "rollouts"
                     self.assertEqual(args.output, output) if output else self.assertTrue(args.output.is_relative_to(Path(temporary) / "TurnOnFaucet" / category))
-            tree = ast.parse(source_text(COLLECT / "pipeline.py"))
+            tree = ast.parse((COLLECT / "pipeline.py").read_text())
             main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
             assignment = next(n for n in main.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "root" for t in n.targets))
             scope = dict(args=SimpleNamespace(output=None, task="TurnOnSinkFaucet"), artifact_path=faucet.artifact_path)
