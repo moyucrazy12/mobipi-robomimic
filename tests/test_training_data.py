@@ -84,14 +84,14 @@ class TrainingDataTests(unittest.TestCase):
             with self.subTest(dataset_count=count):
                 self.config.train.data = [{"path": path} for path in self.paths[:count]]
                 train, valid = self.load_split()
-                independently_normalized = valid[0]["actions"].copy()
+                independently_normalized = np.array([valid[i]["actions"][0].copy() for i in range(4)])
                 stats = train.get_action_normalization_stats()
                 valid.set_action_normalization_stats(stats)
                 raw_action = np.column_stack(([-2, 1, 2, 10], [-2, 1, 2, 10])).astype(np.float32)
                 expected = (raw_action - stats["actions"]["offset"][0]) / stats["actions"]["scale"][0]
                 actual = np.array([valid[i]["actions"][0] for i in range(4)])
                 np.testing.assert_allclose(actual, np.clip(expected, -1, 1))
-                self.assertFalse(np.allclose(valid[0]["actions"], independently_normalized))
+                self.assertFalse(np.allclose(actual, independently_normalized))
                 self.assertTrue(np.all(expected[-1] > 1))
                 np.testing.assert_array_equal(actual[-1], [1, 1])
 
