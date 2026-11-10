@@ -25,6 +25,8 @@ RM = Path(__file__).resolve().parents[1]
 MOBIPI_ROOT = RM.parents[1]
 PROJECT = MOBIPI_ROOT.parent
 COLLECT = MOBIPI_ROOT / "mobipi/collect_demos"
+if not (COLLECT / "experiment_paths.py").is_file():
+    raise unittest.SkipTest("Cross-repository path checks require the MobiPi superproject checkout")
 spec = importlib.util.spec_from_file_location("faucet_paths_test", COLLECT / "experiment_paths.py")
 faucet = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(faucet)
