@@ -8,6 +8,8 @@ from collections import deque
 import hashlib
 import json
 from pathlib import Path
+
+from robomimic.utils.rby1_paths import new_output
 import random
 import time
 
@@ -28,7 +30,7 @@ def parser():
     selection.add_argument("--num-demos", type=int, default=5)
     result.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 42, 123, 12345])
     result.add_argument("--max-steps", type=int, default=2000)
-    result.add_argument("--output-dir", required=True)
+    result.add_argument("--output-dir", default=str(new_output("CloseSingleDoor", "rollouts", "rby1_checkpoints")))
     result.add_argument("--device", default="cuda")
     result.add_argument("--resume", action="store_true")
     result.add_argument("--skip-missing-checkpoints", action="store_true")

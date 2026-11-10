@@ -2,13 +2,15 @@
 import argparse
 import json
 from pathlib import Path
+
+from robomimic.utils.rby1_paths import artifact_path
 import h5py
 import numpy as np
 from robomimic.utils.rby1_saved_model import create_saved_env
 from robomimic.utils.rby1_cartesian import RBY1CartesianAdapter
 from robomimic.scripts.replay_rby1_cartesian import door_geometry
 parser=argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--work-dir',required=True,help='Directory containing dataset_report.json')
+parser.add_argument("--work-dir",default=str(artifact_path("CloseSingleDoor", "diagnostics", "rby1_115d_preparation_new")),help="Directory containing dataset_report.json")
 args=parser.parse_args()
 ROOT=Path(args.work_dir).expanduser().resolve()
 # Clear a previous gate before replaying; a failed rerun must not authorize config creation.

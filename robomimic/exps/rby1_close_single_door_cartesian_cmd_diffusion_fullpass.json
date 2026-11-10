@@ -43,7 +43,7 @@
                 "do_eval": false
             }
         ],
-        "output_dir": "../experiment_results",
+        "output_dir": "../../../../experiment_results/CloseSingleDoor/train",
         "num_data_workers": 4,
         "hdf5_cache_mode": "low_dim",
         "hdf5_use_swmr": true,

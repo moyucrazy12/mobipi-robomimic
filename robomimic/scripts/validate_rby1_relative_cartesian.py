@@ -7,6 +7,8 @@ import argparse
 import json
 from pathlib import Path
 
+from robomimic.utils.rby1_paths import new_output, resolve_training_paths
+
 import h5py
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -21,7 +23,7 @@ from robomimic.utils.rby1_relative_cartesian import (
 def load_config(path):
     from robomimic.config import config_factory
     from robomimic.utils import obs_utils as O
-    raw=json.loads(Path(path).read_text());config=config_factory('diffusion_policy')
+    raw=resolve_training_paths(json.loads(Path(path).read_text()));config=config_factory('diffusion_policy')
     with config.values_unlocked():config.update(raw)
     config.lock();O.initialize_obs_utils_with_config(config)
     assert config.algo.relative_actions.enabled and config.algo.relative_actions.arm=='left'
@@ -193,7 +195,7 @@ def reload_debug(config, output, checkpoint):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--phase',choices=['dataset','replay','reload'],required=True)
-    parser.add_argument('--config',required=True);parser.add_argument('--output-dir',required=True)
+    parser.add_argument('--config',required=True);parser.add_argument("--output-dir",default=str(new_output("CloseSingleDoor", "diagnostics", "rby1_relative_validation")))
     parser.add_argument('--demo',default='demo_10');parser.add_argument('--checkpoint')
     args=parser.parse_args();config=load_config(args.config);output=Path(args.output_dir).resolve();output.mkdir(parents=True,exist_ok=True)
     if args.phase=='dataset':audit_dataset(config,output)
