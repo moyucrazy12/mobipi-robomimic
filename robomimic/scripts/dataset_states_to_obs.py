@@ -114,6 +114,10 @@ def extract_trajectory(
         datagen_info=[],
     )    
     traj_len = states.shape[0]
+    # WholeBody IK actions (RB-Y1) are absolute targets already; RoboCasa's
+    # convert_rel_to_abs_action only handles a right-arm OSC controller
+    ik = getattr(env.base_env.robots[0].composite_controller, "joint_action_policy", None)
+    actions_are_absolute = getattr(ik, "input_action_repr", None) == "absolute"
     # iteration variable @t is over "next obs" indices
     for t in range(traj_len):
         obs = deepcopy(env.reset_to({"states" : states[t]}))
@@ -140,8 +144,12 @@ def extract_trajectory(
         done = int(done)
 
         # get the absolute action
-        action_abs = (actions_abs[t] if actions_abs is not None
-                      else env.base_env.convert_rel_to_abs_action(actions[t]))
+        if actions_abs is not None:
+            action_abs = actions_abs[t]
+        elif actions_are_absolute:
+            action_abs = actions[t]
+        else:
+            action_abs = env.base_env.convert_rel_to_abs_action(actions[t])
 
         # collect transition
         traj["obs"].append(obs)
@@ -165,6 +173,16 @@ def extract_trajectory(
             traj[k] = np.array(traj[k])
 
     return traj
+
+
+def apply_saved_base(env_meta, dataset_path):
+    """Use the base the demos were recorded with (RB-Y1 datasets without a mobile base need RBY1Mount)."""
+    from robomimic.utils.rby1_saved_model import with_saved_base
+    with h5py.File(dataset_path, "r") as f:
+        demo = next(iter(f["data"].keys()))
+        xml = f["data/{}".format(demo)].attrs.get("model_file", "")
+    with_saved_base(env_meta["env_kwargs"], xml)
+    return env_meta
 
 
 def extract_missing_action_dict(dataset):
@@ -213,10 +231,18 @@ def write_traj_to_file(args, output_path, total_samples, total_run, processes, i
     num_processed = 0
     
     try:
-        while((total_run.value < (processes)) or not mul_queue.empty()):
-            if not mul_queue.empty():
+        # Each worker puts None after its last trajectory. Items from one worker
+        # arrive in order, so reading until every worker's None has arrived
+        # cannot drop a trajectory that is still in flight (large trajectories
+        # are sent by a background thread after put() returns, so checking
+        # total_run / mul_queue.empty() could stop before they arrive).
+        finished_workers = 0
+        while finished_workers < processes:
+            item = mul_queue.get()
+            if item is None:
+                finished_workers += 1
+            else:
                 num_processed = num_processed + 1
-                item = mul_queue.get()
                 ep = item[0]
                 traj = item[1]
                 process_num = item[2]
@@ -273,6 +299,7 @@ def write_traj_to_file(args, output_path, total_samples, total_run, processes, i
     # global metadata
     data_grp.attrs["total"] = total_samples.value
     env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
+    apply_saved_base(env_meta, args.dataset)
     if args.generative_textures:
         env_meta["env_kwargs"]["generative_textures"] = "100p"
     if args.randomize_cameras:
@@ -322,6 +349,7 @@ def extract_multiple_trajectories(process_num, current_work_array, work_queue, l
         print()
 
     num_finished.value = num_finished.value + 1
+    mul_queue.put(None)  # end marker for write_traj_to_file
 
     
 def retrieve_new_index(process_num, current_work_array, work_queue, lock):
@@ -343,6 +371,7 @@ def extract_multiple_trajectories_with_error(process_num, current_work_array, wo
         env_meta = MG_FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
     else:
         env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
+    apply_saved_base(env_meta, args.dataset)
     if args.generative_textures:
         env_meta["env_kwargs"]["generative_textures"] = "100p"
     env_meta["env_kwargs"]["randomize_cameras"] = args.randomize_cameras
