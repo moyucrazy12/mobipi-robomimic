@@ -22,10 +22,11 @@ class RelativeCartesianSequenceDataset(SequenceDataset):
         if (kwargs.get("frame_stack") != 2 or kwargs.get("seq_length") != 15
                 or not kwargs.get("pad_frame_stack", True) or not kwargs.get("pad_seq_length", True)
                 or kwargs.get("hdf5_cache_mode") == "all"
-                or tuple(kwargs.get("action_keys", ())) != ("actions_eef_cmd",)
+                or tuple(kwargs.get("action_keys", ())) not in (
+                    ("actions_eef_cmd",), ("actions_eef_cmd", "actions_gripper"))
                 or kwargs.get("hdf5_normalize_obs", False)
                 or kwargs.get("goal_mode") is not None):
-            raise ValueError("Relative baseline requires frame2/seq15, both padding flags, one command key, raw TCP observations and low_dim/no cache")
+            raise ValueError("Relative baseline requires frame2/seq15, padding, pose9 with optional scalar gripper, raw TCP observations and low_dim/no cache")
         if not {self.position_key, self.quaternion_key}.issubset(kwargs["obs_keys"]):
             raise ValueError("Selected arm TCP position and grip-site quaternion must be policy observations")
         super().__init__(*args, **kwargs)
@@ -59,4 +60,10 @@ class RelativeCartesianSequenceDataset(SequenceDataset):
         anchors = tcp_pose(positions, quaternions)
         indices = np.clip(np.arange(n)[:, None] + np.arange(-1, 15)[None, :], 0, n - 1)
         relative = encode_relative_target(anchors[:, None], pose9_to_transform(commands)[indices])
-        return {"actions_eef_cmd": relative.reshape(-1, 9).astype(np.float32)}
+        result = {"actions_eef_cmd": relative.reshape(-1, 9).astype(np.float32)}
+        if "actions_gripper" in self.action_keys:
+            gripper = self.hdf5_file[f"data/{ep}/actions_gripper"][:].astype(np.float32)
+            if gripper.shape != (n, 1):
+                raise ValueError("Expected one scalar gripper command per timestep")
+            result["actions_gripper"] = gripper[indices].reshape(-1, 1)
+        return result
