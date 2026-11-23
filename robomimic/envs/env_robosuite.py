@@ -13,7 +13,7 @@ try:
 except ImportError:
     pass
 try:
-    import mobipi.envs  # noqa: F401  registers Mobi-pi task variants such as CloseDrawerLeft
+    import rby1_mobipi.robot.kitchen_drawer  # noqa: F401  registers CloseDrawerLeft
 except ImportError:
     pass
 
