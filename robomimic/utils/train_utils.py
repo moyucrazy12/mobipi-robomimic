@@ -204,6 +204,8 @@ def dataset_factory(config, obs_keys, filter_by_attribute=None, dataset_path=Non
         from robomimic.utils.rby1_relative_dataset import RelativeCartesianSequenceDataset
         ds_class = RelativeCartesianSequenceDataset
         ds_kwargs["relative_arm"] = config.algo.relative_actions.arm
+        ds_kwargs["relative_observation_keys"] = config.algo.relative_actions.get("observation_keys", None)
+        ds_kwargs["relative_quaternion_order"] = config.algo.relative_actions.get("quaternion_order", "xyzw")
 
     dataset = get_dataset(
         ds_class=ds_class,

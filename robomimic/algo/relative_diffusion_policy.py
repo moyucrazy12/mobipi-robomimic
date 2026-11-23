@@ -11,7 +11,8 @@ class RelativeDiffusionPolicyUNet(DiffusionPolicyUNet):
     def _create_networks(self):
         relative = self.algo_config.relative_actions
         self.relative_arm = relative.arm
-        self.position_key, self.quaternion_key = tcp_observation_keys(self.relative_arm)
+        self.quaternion_order = relative.get("quaternion_order", "xyzw")
+        self.position_key, self.quaternion_key = tuple(relative.get("observation_keys", None) or tcp_observation_keys(self.relative_arm))
         action_keys = list(self.global_config.train.action_keys)
         self.has_gripper_action = action_keys == ["actions_eef_cmd", "actions_gripper"]
         if (dict(self.algo_config.horizon) != dict(observation_horizon=2, prediction_horizon=16, action_horizon=8)
@@ -36,7 +37,7 @@ class RelativeDiffusionPolicyUNet(DiffusionPolicyUNet):
             quaternions = T.to_numpy(obs_dict[self.quaternion_key])
             if positions.shape != (1, 2, 3) or quaternions.shape != (1, 2, 4):
                 raise ValueError("Relative queued rollout supports one environment with two observation frames")
-            self.relative_anchor = tcp_pose(positions[0, -1], quaternions[0, -1])
+            self.relative_anchor = tcp_pose(positions[0, -1], quaternions[0, -1], getattr(self, "quaternion_order", "xyzw"))
         return super().get_action(obs_dict, goal_dict)
 
     def decode_action_for_environment(self, action):

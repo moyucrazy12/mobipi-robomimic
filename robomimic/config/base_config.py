@@ -159,6 +159,7 @@ class BaseConfig(Config):
         ## dataset loader config ##
 
         # num workers for loading data - generally set to 0 for low-dim datasets, and 2 for image datasets
+        self.train.drop_last = True  # Preserve historical behavior; opt out for full passes.
         self.train.num_data_workers = 0  
 
         # One of ["all", "low_dim", or None]. Set to "all" to cache entire hdf5 in memory - this is 
