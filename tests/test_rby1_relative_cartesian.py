@@ -25,6 +25,13 @@ from robomimic.utils.rby1_relative_cartesian import (
 
 
 class RelativeGeometryTests(unittest.TestCase):
+    def test_explicit_wxyz_order(self):
+        xyzw = Rotation.from_euler("xyz", [.2, -.4, .7]).as_quat()
+        np.testing.assert_allclose(tcp_pose([1, 2, 3], xyzw),
+            tcp_pose([1, 2, 3], xyzw[[3, 0, 1, 2]], "wxyz"))
+        with self.assertRaises(ValueError):
+            tcp_pose([0, 0, 0], xyzw, "unknown")
+
     def test_random_se3_and_rotation6d_roundtrip(self):
         rng = np.random.default_rng(132)
         anchors = tcp_pose(rng.normal(size=(50,3)), Rotation.random(50, random_state=rng).as_quat())

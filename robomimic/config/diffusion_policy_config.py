@@ -43,6 +43,8 @@ class DiffusionPolicyConfig(BaseConfig):
         # Opt-in representation; absolute models retain their original behavior.
         self.algo.relative_actions.enabled = False
         self.algo.relative_actions.arm = "left"
+        self.algo.relative_actions.observation_keys = None
+        self.algo.relative_actions.quaternion_order = "xyzw"
         
         # Noise Scheduler
         ## DDPM

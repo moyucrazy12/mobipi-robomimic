@@ -180,6 +180,8 @@ def lr_scheduler_from_optim_params(net_optim_params, net, optimizer, num_trainin
             num_warmup_steps=num_warmup_steps,
         )
     elif lr_scheduler_type == "cosine":
+        if num_training_steps is None:
+            raise ValueError("Cosine scheduling requires an explicit total step count")
         name = SchedulerType(lr_scheduler_type)
         schedule_func = TYPE_TO_SCHEDULER_FUNCTION[name]
         return schedule_func(

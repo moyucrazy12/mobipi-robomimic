@@ -28,13 +28,17 @@ def validate_transform(transform):
     return value
 
 
-def tcp_pose(position, quaternion_xyzw):
+def tcp_pose(position, quaternion_xyzw, quaternion_order="xyzw"):
     position = np.asarray(position, dtype=np.float64)
     quaternion = np.asarray(quaternion_xyzw, dtype=np.float64)
+    if quaternion_order not in ("xyzw", "wxyz"):
+        raise ValueError("Expected xyzw or wxyz quaternion order")
     if (position.shape[-1:] != (3,) or quaternion.shape != position.shape[:-1] + (4,)
             or not np.isfinite(position).all() or not np.isfinite(quaternion).all()
             or np.any(np.linalg.norm(quaternion, axis=-1) < 1e-12)):
-        raise ValueError("Expected matching finite xyz/xyzw arrays")
+        raise ValueError("Expected matching finite xyz/quaternion arrays")
+    if quaternion_order == "wxyz":
+        quaternion = quaternion[..., [1, 2, 3, 0]]
     result = np.broadcast_to(np.eye(4), position.shape[:-1] + (4, 4)).copy()
     result[..., :3, :3] = Rotation.from_quat(quaternion.reshape(-1, 4)).as_matrix().reshape(position.shape[:-1] + (3, 3))
     result[..., :3, 3] = position

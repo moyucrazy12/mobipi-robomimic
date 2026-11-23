@@ -179,7 +179,9 @@ class Algo(object):
         self.optimizers = dict()
         self.lr_schedulers = dict()
 
-        num_training_steps = self.global_config.train.num_epochs * self.global_config.experiment.epoch_every_n_steps
+        steps_per_epoch = self.global_config.experiment.epoch_every_n_steps
+        num_training_steps = (None if steps_per_epoch is None else
+                              self.global_config.train.num_epochs * steps_per_epoch)
 
         for k in self.optim_params:
             # only make optimizers for networks that have been created - @optim_params may have more

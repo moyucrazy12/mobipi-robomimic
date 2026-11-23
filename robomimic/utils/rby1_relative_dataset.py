@@ -16,9 +16,10 @@ class RelativeCartesianSequenceDataset(SequenceDataset):
     The source key remains actions_eef_cmd for native shape discovery; only its
     in-memory labels/statistics become relative when this class is selected.
     """
-    def __init__(self, *args, relative_arm="left", **kwargs):
+    def __init__(self, *args, relative_arm="left", relative_observation_keys=None, relative_quaternion_order="xyzw", **kwargs):
         self.relative_arm = relative_arm
-        self.position_key, self.quaternion_key = tcp_observation_keys(relative_arm)
+        self.quaternion_order = relative_quaternion_order
+        self.position_key, self.quaternion_key = tuple(relative_observation_keys or tcp_observation_keys(relative_arm))
         if (kwargs.get("frame_stack") != 2 or kwargs.get("seq_length") != 15
                 or not kwargs.get("pad_frame_stack", True) or not kwargs.get("pad_seq_length", True)
                 or kwargs.get("hdf5_cache_mode") == "all"
@@ -34,7 +35,7 @@ class RelativeCartesianSequenceDataset(SequenceDataset):
     def anchor_at(self, demo_id, index):
         position = self.get_dataset_for_ep(demo_id, "obs/" + self.position_key)[index]
         quaternion = self.get_dataset_for_ep(demo_id, "obs/" + self.quaternion_key)[index]
-        return tcp_pose(position, quaternion)
+        return tcp_pose(position, quaternion, self.quaternion_order)
 
     def get_dataset_sequence_from_demo(self, demo_id, index_in_demo, keys,
                                        num_frames_to_stack=0, seq_length=1):
@@ -57,7 +58,7 @@ class RelativeCartesianSequenceDataset(SequenceDataset):
         n = len(commands)
         positions = self.hdf5_file[f"data/{ep}/obs/{self.position_key}"][:]
         quaternions = self.hdf5_file[f"data/{ep}/obs/{self.quaternion_key}"][:]
-        anchors = tcp_pose(positions, quaternions)
+        anchors = tcp_pose(positions, quaternions, self.quaternion_order)
         indices = np.clip(np.arange(n)[:, None] + np.arange(-1, 15)[None, :], 0, n - 1)
         relative = encode_relative_target(anchors[:, None], pose9_to_transform(commands)[indices])
         result = {"actions_eef_cmd": relative.reshape(-1, 9).astype(np.float32)}

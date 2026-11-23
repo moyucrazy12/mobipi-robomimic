@@ -211,7 +211,7 @@ def train(config, device, eval_only=False):
         batch_size=config.train.batch_size,
         shuffle=(train_sampler is None),
         num_workers=config.train.num_data_workers,
-        drop_last=True
+        drop_last=config.train.get("drop_last", True)
     )
 
     if config.experiment.validate:
@@ -224,7 +224,7 @@ def train(config, device, eval_only=False):
             batch_size=config.train.batch_size,
             shuffle=(valid_sampler is None),
             num_workers=num_workers,
-            drop_last=True
+            drop_last=config.train.get("drop_last", True)
         )
     else:
         valid_loader = None
